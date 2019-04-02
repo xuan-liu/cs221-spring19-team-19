@@ -1,4 +1,4 @@
-## CS221 Project
+## CS221 Project - Peterman Search Engine
 
 This repository contains the starter skeleton code for the CS221 project. 
 

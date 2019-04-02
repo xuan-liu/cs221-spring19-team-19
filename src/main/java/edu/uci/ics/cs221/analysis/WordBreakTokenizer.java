@@ -6,9 +6,9 @@ import java.nio.file.Paths;
 import java.util.List;
 
 /**
- * Project 1, task 2: Implement a Dynamic-Programming based Word Break Tokenizer.
+ * Project 1, task 2: Implement a Dynamic-Programming based Word-Break Tokenizer.
  *
- * Word break is a problem where given a dictionary and a string (text with all white spaces removed),
+ * Word-break is a problem where given a dictionary and a string (text with all white spaces removed),
  * determine how to break the string into sequence of words.
  * For example:
  * input string "catanddog" is broken to tokens ["cat", "and", "dog"]
@@ -24,11 +24,11 @@ import java.util.List;
  * Finally, ["ai"] is chosen as result because it has higher probability.
  *
  * Requirements:
- *  - Use Dynamic Programming for efficiency. Running time cannot be too slow.
+ *  - Use Dynamic Programming for efficiency purposes.
  *  - Use the the given dictionary corpus and frequency statistics to determine optimal alternative.
  *      The probability is calculated as the product of each token's probability, assuming the tokens are independent.
  *  - A match in dictionary is case insensitive. Output tokens should all be in lower case.
- *  - Stop words should be removed after breaking.
+ *  - Stop words should be removed.
  *  - If there's no possible way to break the string, throw an exception.
  *
  */
