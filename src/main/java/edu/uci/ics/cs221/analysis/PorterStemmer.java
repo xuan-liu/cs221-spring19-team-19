@@ -31,7 +31,7 @@ public class PorterStemmer implements Stemmer
      * before starting another word.
      */
     public void reset() { i = 0; dirty = false; }
-
+    
     /**
      * Add a character to the word being stemmed.  When you are finished
      * adding characters, you can call stem(void) to process the word.
