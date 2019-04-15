@@ -4,6 +4,18 @@ package edu.uci.ics.cs221.analysis;
 import org.apache.lucene.util.ArrayUtil;
 
 /**
+ * Project 1, task 3: Incorporate a Porter stemmer.
+ *
+ * Stemming is the process of reducing a word into its "stem" ("root") form.
+ *
+ * Porter stemming is a classic and popular algorithm that uses a set of rules and steps to process a token.
+ * We incorporate the following existing Porter stemmer implementation into this project and
+ * add lucene-core-8.0.0.jar as dependency to Maven.
+ *
+ * https://github.com/apache/lucene-solr/blob/master/lucene/analysis/common/src/java/org/apache/lucene/analysis/en/PorterStemmer.java
+ */
+
+/**
  *
  * Stemmer, implementing the Porter Stemming Algorithm
  *
@@ -31,7 +43,7 @@ public class PorterStemmer implements Stemmer
      * before starting another word.
      */
     public void reset() { i = 0; dirty = false; }
-    
+
     /**
      * Add a character to the word being stemmed.  When you are finished
      * adding characters, you can call stem(void) to process the word.
@@ -435,5 +447,5 @@ public class PorterStemmer implements Stemmer
         i = k+1;
         return dirty;
     }
-    
+
 }
