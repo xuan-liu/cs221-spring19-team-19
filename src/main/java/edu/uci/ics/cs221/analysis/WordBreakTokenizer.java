@@ -127,24 +127,24 @@ public class WordBreakTokenizer implements Tokenizer {
     }
 
     /**
-     * For the input String, tokenize it based on white spaces, remove stop words, and
+     * For the input String, tokenize it based on white spaces, and
      * compute the log probability, assuming the tokens are independent
      */
 
     private double computeFrequency(String s, Map<String, Double> dict) {
-        PunctuationTokenizer pt = new PunctuationTokenizer();
-        List<String> l = pt.tokenize(s);
+        StringTokenizer st = new StringTokenizer(s, " \t\n,.;?!");
         double logFreq = 0.0;
-        for (int i = 0; i < l.size(); i++) {
-            logFreq += Math.log(dict.get(l.get(i)));
+        while (st.hasMoreTokens()) {
+            String temp = st.nextToken();
+            logFreq += Math.log(dict.get(temp));
         }
 //        System.out.println(l);
 //        System.out.println(logFreq);
         return logFreq;
     }
 
-    public static void main(String[] args) {
-        WordBreakTokenizer tokenizer = new WordBreakTokenizer();
-        System.out.println(tokenizer.tokenize("THISiswhATItoldyourI'llFRIendandI'llgoonlinecontactcan'tforget"));
-    }
+//    public static void main(String[] args) {
+//        WordBreakTokenizer tokenizer = new WordBreakTokenizer();
+//        System.out.println(tokenizer.tokenize("THISiswhATItoldyourI'llFRIendandI'llgoonlinecontactcan'tforget"));
+//    }
 }
