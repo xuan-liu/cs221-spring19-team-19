@@ -112,11 +112,5 @@ public class JapaneseWordBreaker implements Tokenizer {
         }
         return logFreq;
     }
-
-    public static void main(String[] args) {
-        JapaneseWordBreaker br = new JapaneseWordBreaker();
-        String s = br.dictLines.get(0);
-        String[] ss = s.split(" ");
-        System.out.println(br.wordDict.size());
-    }
+    
 }
