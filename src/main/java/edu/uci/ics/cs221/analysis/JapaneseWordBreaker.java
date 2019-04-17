@@ -8,13 +8,9 @@ import java.util.*;
 public class JapaneseWordBreaker implements Tokenizer {
     Map<String, Double> wordDict = new HashMap<>(); // a map to store the word dictionary, key is the word, value is the frequency
     List<String> dictLines;
-    /**
-     * Initialize the wordDict
-     */
 
     public JapaneseWordBreaker() {
         try {
-            // load the dictionary corpus
             URL dictResource = WordBreakTokenizer.class.getClassLoader().getResource("cs221_frequency_dictionary_jp.txt");
             dictLines = Files.readAllLines(Paths.get(dictResource.toURI()));
 
@@ -36,10 +32,6 @@ public class JapaneseWordBreaker implements Tokenizer {
         }
     }
 
-    /**
-     * Return the optimal tokenize result with highest probability
-     */
-
     public List<String> tokenize(String text) {
         List<String> possibleString = wordBreakTopDown(text.toLowerCase(), wordDict.keySet());
 
@@ -59,10 +51,6 @@ public class JapaneseWordBreaker implements Tokenizer {
         PunctuationTokenizer pt = new PunctuationTokenizer();
         return pt.tokenize(result);
     }
-
-    /**
-     * Find all the possible word combinations of the input String.
-     */
 
     private List<String> wordBreakTopDown(String s, Set<String> wordDict) {
         Map<Integer, List<String>> dp = new HashMap<>();
@@ -97,11 +85,6 @@ public class JapaneseWordBreaker implements Tokenizer {
         dp.put(start, words);
         return words;
     }
-
-    /**
-     * For the input String, tokenize it based on white spaces, and
-     * compute the log probability, assuming the tokens are independent
-     */
 
     private double computeFrequency(String s, Map<String, Double> dict) {
         StringTokenizer st = new StringTokenizer(s, " \t\n,.;?!");
