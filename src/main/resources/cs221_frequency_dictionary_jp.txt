@@ -1,5 +1,3 @@
-0 corpus size: 253071774 tokens
-0 lexicon size: 124489 types
 1 41309.50 の
 2 23509.54 に
 3 22216.80 は
