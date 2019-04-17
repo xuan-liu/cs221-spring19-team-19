@@ -1,6 +1,6 @@
 ## CS221 Project - Peterman Search Engine
 
-Information Retirieval Engine
+Information Retrieval Engine
 
 ### Team 19
 
