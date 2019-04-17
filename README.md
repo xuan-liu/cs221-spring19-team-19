@@ -4,6 +4,4 @@ Information Retirieval Engine
 
 ### Team 19
 
-Nedhoven
-
-xuan-liu
+xuan-liu / Nedhoven
