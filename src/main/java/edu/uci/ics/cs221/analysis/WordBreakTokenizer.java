@@ -35,7 +35,7 @@ public class WordBreakTokenizer implements Tokenizer {
         }
     }
 
-    // Return the optimal tokenize result with highest probability
+    // return the optimal tokenize result with highest probability
 
     public List<String> tokenize(String text) {
         if (text.length() == 0) {
@@ -44,7 +44,7 @@ public class WordBreakTokenizer implements Tokenizer {
         return breakWordDP(text.toLowerCase());
     }
 
-    //Given dictionary, use Dynamic Programming to break the word, always keep a best backtracking path for each entry
+    // given dictionary, use Dynamic Programming to break the word, always keep a best backtracking path for each entry
 
     private List<String> breakWordDP(String word) {
         int path[][] = new int[word.length()][word.length()];
