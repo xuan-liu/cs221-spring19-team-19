@@ -122,7 +122,6 @@ public class PunctuationTokenizerTest {
         String text = "uci \tcs221\t\ninformation\n \tretrieval";
         List<String> expected = Arrays.asList("uci", "cs221", "information", "retrieval");
         PunctuationTokenizer tokenizer = new PunctuationTokenizer();
-
         assertEquals(expected, tokenizer.tokenize(text));
     }
 
@@ -132,7 +131,6 @@ public class PunctuationTokenizerTest {
         List<String> expected =
                 Arrays.asList("uci", "cs221", "information", "retrieval", "project", "1");
         PunctuationTokenizer tokenizer = new PunctuationTokenizer();
-
         assertEquals(expected, tokenizer.tokenize(text));
     }
 
@@ -149,7 +147,6 @@ public class PunctuationTokenizerTest {
         String text = ",.;?!ucics221informationretrieval,.;?!";
         List<String> expected = Arrays.asList("ucics221informationretrieval");
         PunctuationTokenizer tokenizer = new PunctuationTokenizer();
-
         assertEquals(expected, tokenizer.tokenize(text));
     }
 
