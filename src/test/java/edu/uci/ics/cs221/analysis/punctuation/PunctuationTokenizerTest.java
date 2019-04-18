@@ -4,6 +4,7 @@ package edu.uci.ics.cs221.analysis.punctuation;
 import edu.uci.ics.cs221.analysis.PunctuationTokenizer;
 import org.junit.Test;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
@@ -62,8 +63,24 @@ public class PunctuationTokenizerTest {
 
     @Test
     public void team6Test3() {
-        String text = "\tgood example\nyes great example";
-        List<String> expected = Arrays.asList("good", "example", "yes", "great", "example");
+        String text = "good, four-year-old children. never asia come? it's china! thanks.";
+        List<String> expected = Arrays.asList("good", "four-year-old", "children", "never", "asia",
+                "come", "it's", "china", "thanks");
+        PunctuationTokenizer tokenizer = new PunctuationTokenizer();
+        assertEquals(expected, tokenizer.tokenize(text));
+    }
+
+    @Test
+    public void team6Test4() {
+        String text = "I cannot decide which car I like best " +
+                "the Ferrari, with its quick acceleration and " +
+                "sporty look; the midsize Ford Taurus, with " +
+                "its comfortable seats and ease of handling; " +
+                "or the compact Geo, with its economical fuel consumption.";
+        List<String> expected = Arrays.asList("cannot", "decide", "car", "like", "best",
+                "ferrari", "quick", "acceleration", "sporty", "look", "midsize", "ford",
+                "taurus", "comfortable", "seats", "ease", "handling", "compact", "geo", "economical",
+                "fuel", "consumption");
         PunctuationTokenizer tokenizer = new PunctuationTokenizer();
         assertEquals(expected, tokenizer.tokenize(text));
     }
@@ -144,4 +161,39 @@ public class PunctuationTokenizerTest {
         assertEquals(expected, tokenizer.tokenize(text));
     }
 
+    @Test
+    public void team4Test1() {
+        System.out.println("It: can deal with empty string");
+        String emptyText = "";
+        List<String> expected = new ArrayList<>();
+        PunctuationTokenizer tokenizer = new PunctuationTokenizer();
+        assertEquals(expected, tokenizer.tokenize(emptyText));
+    }
+
+    @Test
+    public void team4Test2() {
+        System.out.println("It: can tokenize normal string with white spaces");
+        String text = "I am Happy Today!";
+        List<String> expected = Arrays.asList("happy", "today");
+        PunctuationTokenizer tokenizer = new PunctuationTokenizer();
+        assertEquals(expected, tokenizer.tokenize(text));
+    }
+
+    @Test
+    public void team4Test3() {
+        System.out.println("It: can deal with any punctuations and regard other special characters as normal tokens");
+        String Text = "......I am not happy today!? , ) ;";
+        List<String> expected = Arrays.asList("happy", "today", ")");
+        PunctuationTokenizer tokenizer = new PunctuationTokenizer();
+        assertEquals(expected, tokenizer.tokenize(Text));
+    }
+
+    @Test
+    public void team4Test4() {
+        System.out.println("It: should tokenize the string with multiple adjacent white spaces");
+        String text = "   I     am    Happy Today!        ";
+        List<String> expected = Arrays.asList("happy", "today");
+        PunctuationTokenizer tokenizer = new PunctuationTokenizer();
+        assertEquals(expected, tokenizer.tokenize(text));
+    }
 }
