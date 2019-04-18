@@ -32,64 +32,61 @@ public class JapaneseWordBreaker implements Tokenizer {
     }
 
     public List<String> tokenize(String text) {
-        Set<String> keys = dictionary.keySet();
-        List<String> possibleString = wordBreakTopDown(text.toLowerCase(), keys);
-        if (possibleString.size() == 0) {
-            throw new UnsupportedOperationException("WordBreakerTokenizer Error: Unable to break the text!");
+        if (text.length() == 0) {
+            return Arrays.asList();
         }
-        double maxFreq = -1 * Double.MAX_VALUE;
-        String result = "";
-        for (int i = 0; i < possibleString.size(); i++) {
-            double freq = computeFrequency(possibleString.get(i));
-            if (freq > maxFreq) {
-                result = possibleString.get(i);
-                maxFreq = freq;
+        return breakWordDP(text.toLowerCase(), dictionary);
+    }
+
+    private List<String> breakWordDP(String word, Map<String, Double> dict) {
+        int path[][] = new int[word.length()][word.length()];
+        double logFreq[][] = new double[word.length()][word.length()];
+
+        for (int i = 0; i < path.length; i++) {
+            for (int j = 0; j < path[i].length ; j++) {
+                path[i][j] = -1;
+                logFreq[i][j] = -Double.MAX_VALUE;
             }
         }
+
+        for (int l = 1; l <= word.length(); l++) {
+            for (int i = 0; i < word.length() - l + 1 ; i++) {
+                int j = i + l-1;
+                String str = word.substring(i,j+1);
+
+                if (dict.containsKey(str)) {
+                    logFreq[i][j] = Math.log(dict.get(str));
+                    path[i][j] = i;
+                }
+
+                for(int k = i + 1; k <= j; k++){
+                    if(path[i][k-1] != -1 && path[k][j] != -1){
+                        if (logFreq[i][k-1] + logFreq[k][j] > logFreq[i][j]) {
+                            logFreq[i][j] = logFreq[i][k-1] + logFreq[k][j];
+                            path[i][j] = k;
+                        }
+                    }
+                }
+            }
+        }
+
+        if(path[0][word.length()-1] == -1){
+            throw new RuntimeException("there's no possible way to break the string!");
+        }
+
+        String result = backwardResult(path, word, 0, word.length() -1);
         PunctuationTokenizer pt = new PunctuationTokenizer();
         return pt.tokenize(result);
     }
 
-    private List<String> wordBreakTopDown(String s, Set<String> wordDict) {
-        Map<Integer, List<String>> dp = new HashMap<>();
-        int max = 0;
-        for (String s1 : wordDict) {
-            max = Math.max(max, s1.length());
+    private String backwardResult(int [][] path, String s, int i, int j) {
+        int k = path[i][j];
+        if (i == k) {
+            return s.substring(i, j + 1);
         }
-        return wordBreakUtil(s, wordDict, dp, 0, max);
-    }
 
-    private List<String> wordBreakUtil(String s, Set<String> dict, Map<Integer, List<String>> dp, int start, int max) {
-        if (start == s.length()) {
-            return Collections.singletonList("");
-        }
-        if (dp.containsKey(start)) {
-            return dp.get(start);
-        }
-        List<String> words = new ArrayList<>();
-        for (int i = start; i < start + max && i < s.length(); i++) {
-            String newWord = s.substring(start, i + 1);
-            if (!dict.contains(newWord)) {
-                continue;
-            }
-            List<String> result = wordBreakUtil(s, dict, dp, i + 1, max);
-            for (String word : result) {
-                String extraSpace = word.length() == 0 ? "" : " ";
-                words.add(newWord + extraSpace + word);
-            }
-        }
-        dp.put(start, words);
-        return words;
+        String sLeft = backwardResult(path, s, i, k - 1);
+        String sRight = backwardResult(path, s, k, j);
+        return sLeft + " " + sRight;
     }
-
-    private double computeFrequency(String s) {
-        StringTokenizer st = new StringTokenizer(s, " \t\n,.;?!");
-        double logFreq = 0.0;
-        while (st.hasMoreTokens()) {
-            String temp = st.nextToken();
-            logFreq += Math.log(dictionary.get(temp));
-        }
-        return logFreq;
-    }
-
 }
