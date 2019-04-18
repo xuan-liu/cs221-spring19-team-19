@@ -221,7 +221,6 @@ public class WordBreakTokenizerTest {
         String text = "WEhaveaCOOLTaskinFrontOfUSANDwEShouldbehavingAgoodTIme";
         List<String> expected = Arrays.asList("cool","task","front","us","behaving","good","time");
         WordBreakTokenizer tokenizer = new WordBreakTokenizer();
-
         assertEquals(expected, tokenizer.tokenize(text));
     }
 
