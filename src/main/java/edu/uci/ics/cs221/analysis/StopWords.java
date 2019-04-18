@@ -1,15 +1,13 @@
+
 package edu.uci.ics.cs221.analysis;
 
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
 
-/**
- * A list of stop words.
- * Please use this list and don't change it for uniform behavior in testing.
- */
 public class StopWords {
 
+    // English common words, size = 127
     public static Set<String> stopWords = new HashSet<>();
     static {
         stopWords.addAll(Arrays.asList(
@@ -139,8 +137,113 @@ public class StopWords {
                 "just",
                 "don",
                 "should",
-                "now"
-        ));
+                "now"));
+    }
+
+    // Japanese common words, size = 100
+    public static Set<String> stopWordsJapanese = new HashSet<>();
+    static {
+        stopWordsJapanese.addAll(Arrays.asList(
+                "の",
+                "に",
+                "は",
+                "て",
+                "を",
+                "が",
+                "だ",
+                "た",
+                "する",
+                "と",
+                "ます",
+                "で",
+                "ない",
+                "いる",
+                "も",
+                "ある",
+                "・",
+                "です",
+                "「",
+                "」",
+                "こと",
+                "e",
+                "か",
+                "o",
+                "a",
+                "t",
+                "なる",
+                "れる",
+                "から",
+                "）",
+                "（",
+                "i",
+                "n",
+                "r",
+                "s",
+                "ん",
+                "よう",
+                "いう",
+                "う",
+                "人",
+                "m",
+                "この",
+                "という",
+                "思う",
+                "その",
+                "l",
+                "的",
+                "c",
+                "年",
+                "日",
+                "！",
+                "h",
+                "私",
+                "もの",
+                "や",
+                "ば",
+                "d",
+                "？",
+                "p",
+                "それ",
+                "u",
+                "者",
+                "できる",
+                "これ",
+                "#",
+                "|",
+                "言う",
+                "b",
+                "S",
+                "y",
+                "くる",
+                "月",
+                "C",
+                "として",
+                "さん",
+                "T",
+                "A",
+                "：",
+                "まで",
+                "たい",
+                "g",
+                "w",
+                "など",
+                "k",
+                "中",
+                "P",
+                "られる",
+                "お",
+                "ね",
+                "，",
+                "…",
+                "へ",
+                "見る",
+                "ため",
+                "てる",
+                "M",
+                "そう",
+                "日本",
+                "おる",
+                "一"));
     }
 
 }
