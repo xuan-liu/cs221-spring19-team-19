@@ -123,11 +123,14 @@ public class InvertedIndexManager {
         PageFileChannel wordsFileChannel = PageFileChannel.createOrOpen(wordsPath);
 
         ByteBuffer wordsBuffer = ByteBuffer.allocate(5000 * invertedLists.size());
+        int offset = 0;
         for (String word: invertedLists.keySet()) {
             wordsBuffer.putInt(word.length());
             byte[] tmp = word.getBytes();
             wordsBuffer.put(tmp);
+            wordsBuffer.putInt(offset);
             wordsBuffer.putInt(invertedLists.get(word).size());
+            offset += invertedLists.get(word).size();
         }
 
         // write the first page with an integer, which is the total number of bytes
@@ -296,6 +299,7 @@ public class InvertedIndexManager {
             int wordLen = wordsBuffer.getInt();
             byte[] wordb = new byte[wordLen];
             wordsBuffer.get(wordb, 0, wordLen);
+            int listOff = wordsBuffer.getInt();
             int listLen = wordsBuffer.getInt();
             String words = new String(wordb);
 //            System.out.println(wordLen+","+words+","+listLen);
