@@ -1,3 +1,4 @@
+
 package edu.uci.ics.cs221.index.inverted;
 
 import com.google.common.base.Preconditions;
@@ -195,25 +196,36 @@ public class InvertedIndexManager {
      * @return a iterator of documents matching the query
      */
     public Iterator<Document> searchQuery(String keyword) {
+        // check if the keyword is not null
         Preconditions.checkNotNull(keyword);
         List<String> word = analyzer.analyze(keyword);
+        // check if the processed keyword is not null
         if (word.size() == 0 || word.get(0).length() == 0) {
             return null;
         }
         keyword = word.get(0);
+        // documents that match the search
         List<Document> docs = new ArrayList<>();
         int totalSegments = getNumSegments();
+        // searching each individual segment
         for (int seg = 0; seg < totalSegments; seg++) {
             Path dictSeg = Paths.get(indexFolder + "segment" + seg + "a");
             PageFileChannel pfc = PageFileChannel.createOrOpen(dictSeg);
+            // loading the dictionary
             ByteBuffer bb = pfc.readAllPages();
             bb.rewind();
+            // consume the total number of bytes in the segment
             int cap = bb.getInt();
+            // set the limit to the one page (for the cap) and the total bytes in the segment
             bb.limit(PageFileChannel.PAGE_SIZE + cap);
+            // find if the keyword exists in the dictionary
+            bb.position(PageFileChannel.PAGE_SIZE);
             List<Integer> info = findKeyword(bb, keyword, seg);
             if (info == null) {
+                // move on if dictionary does not contain the keyword
                 continue;
             }
+            // all the documents in the segment match the keyword
             List<Document> segmentDocs = getDocuments(seg, info);
             for (Document temp : segmentDocs) {
                 docs.add(temp);
@@ -230,8 +242,49 @@ public class InvertedIndexManager {
      */
     public Iterator<Document> searchAndQuery(List<String> keywords) {
         Preconditions.checkNotNull(keywords);
-
-        throw new UnsupportedOperationException();
+        int totalSegments = getNumSegments();
+        // documents match the and search
+        List<Document> andDocs = new ArrayList<>();
+        // for the first merge, we just copy the result
+        boolean flag = true;
+        // search segments
+        for (int seg = 0; seg < totalSegments; seg++) {
+            Path dictSeg = Paths.get(indexFolder + "segment" + seg + "a");
+            PageFileChannel pfc = PageFileChannel.createOrOpen(dictSeg);
+            ByteBuffer bb = pfc.readAllPages();
+            bb.rewind();
+            int cap = bb.getInt();
+            bb.limit(PageFileChannel.PAGE_SIZE + cap);
+            // result of the and search
+            List<Integer> andSearch = new ArrayList<>();
+            for (String keyword : keywords) {
+                List<String> word = analyzer.analyze(keyword);
+                if (word.size() == 0 || word.get(0).length() == 0) {
+                    return null;
+                }
+                keyword = word.get(0);
+                bb.position(PageFileChannel.PAGE_SIZE);
+                List<Integer> info = findKeyword(bb, keyword, seg);
+                bb.position(PageFileChannel.PAGE_SIZE);
+                if (info == null) {
+                    break;
+                }
+                if (flag) {
+                    // copy the result for the first search
+                    andSearch = andMerge(info, info);
+                    flag = false;
+                }
+                else {
+                    // merge the results
+                    andSearch = andMerge(andSearch, info);
+                }
+            }
+            List<Document> segmentDocs = getDocuments(seg, andSearch);
+            for (Document temp : segmentDocs) {
+                andDocs.add(temp);
+            }
+        }
+        return andDocs.iterator();
     }
 
     /**
@@ -242,12 +295,57 @@ public class InvertedIndexManager {
      */
     public Iterator<Document> searchOrQuery(List<String> keywords) {
         Preconditions.checkNotNull(keywords);
-
-        throw new UnsupportedOperationException();
+        int totalSegments = getNumSegments();
+        // documents match the or search
+        List<Document> orDocs = new ArrayList<>();
+        // search each segment
+        for (int seg = 0; seg < totalSegments; seg++) {
+            Path dictSeg = Paths.get(indexFolder + "segment" + seg + "a");
+            PageFileChannel pfc = PageFileChannel.createOrOpen(dictSeg);
+            // load the dictionary
+            ByteBuffer bb = pfc.readAllPages();
+            bb.rewind();
+            int cap = bb.getInt();
+            bb.limit(PageFileChannel.PAGE_SIZE + cap);
+            // result of or search
+            List<Integer> orSearch = new ArrayList<>();
+            // search fo each keyword
+            for (String keyword : keywords) {
+                List<String> word = analyzer.analyze(keyword);
+                // check if keyword is empty
+                if (word.size() == 0 || word.get(0).length() == 0) {
+                    continue;
+                }
+                keyword = word.get(0);
+                // set the position to the beginning of the dictionary
+                bb.position(PageFileChannel.PAGE_SIZE);
+                List<Integer> info = findKeyword(bb, keyword, seg);
+                // set the position back
+                bb.position(PageFileChannel.PAGE_SIZE);
+                if (info == null) {
+                    continue;
+                }
+                // merge the results
+                orSearch = orMerge(orSearch, info);
+            }
+            List<Document> segmentDocs = getDocuments(seg, orSearch);
+            for (Document temp : segmentDocs) {
+                orDocs.add(temp);
+            }
+        }
+        return orDocs.iterator();
     }
     
+    /**
+     * Finds the keyword in the loaded bytes of the dictionary.
+     *
+     * @param bb loaded dictionary in bytes
+     * @param target the keyword to look for
+     * @param segID the segment number to look for the target in
+     * @return a list of integers containing the ID of documents matching the search
+     */
+
     private List<Integer> findKeyword(ByteBuffer bb, String target, int segID) {
-        bb.position(PageFileChannel.PAGE_SIZE);
         while (bb.hasRemaining()) {
             int wordLength = bb.getInt();
             if (wordLength == 0) {
@@ -269,6 +367,14 @@ public class InvertedIndexManager {
         return null;
     }
 
+    /**
+     * Get all the documents matching the ID list in a segment.
+     *
+     * @param segID the number of segment
+     * @param idList a list of document IDs
+     * @return a list of documents matching the search
+     */
+
     public List<Document> getDocuments(int segID, List<Integer> idList) {
         List<Document> ans = new ArrayList<>();
         String path = indexFolder + "segment" + segID + ".db";
@@ -284,7 +390,17 @@ public class InvertedIndexManager {
         return ans;
     }
 
-    private List<Integer> getIndexList(int segID, int pageID, int offset, int length) {
+    /**
+     * Get the inverted list in a certain page of a segment with given offset and length.
+     *
+     * @param segID the ID of segment
+     * @param pageID the ID of page
+     * @param offset an offset of the inverted list
+     * @param length the length of the inverted list
+     * @return a list of document IDs matching the search
+     */
+
+    public List<Integer> getIndexList(int segID, int pageID, int offset, int length) {
         Path path = Paths.get(indexFolder + "segment" + segID + "b");
         PageFileChannel pfc = PageFileChannel.createOrOpen(path);
         ByteBuffer indexBuffer = pfc.readPage(pageID);
@@ -294,6 +410,96 @@ public class InvertedIndexManager {
         for (int i = 0; i < length; i++) {
             int temp = indexBuffer.getInt();
             ans.add(temp);
+        }
+        return ans;
+    }
+    
+    /**
+     * Performs merge for the and search query
+     *
+     * @param list1 a new list of results
+     * @param list2 old list
+     * @return a merged list
+     */
+
+    private List<Integer> andMerge(List<Integer> list1, List<Integer> list2) {
+        // Collections.sort(list1);
+        // Collections.sort(list2);
+        // lists are considered to be sorted already
+        if (list1.size() == 0 || list2.size() == 0) {
+            return null;
+        }
+        List<Integer> ans = new ArrayList<>();
+        int p1 = 0;
+        int p2 = 0;
+        while (p1 < list1.size() && p2 < list2.size()) {
+            int num1 = list1.get(p1);
+            int num2 = list2.get(p2);
+            if (num1 == num2) {
+                ans.add(num1);
+                p1++;
+                p2++;
+            }
+            else if (num1 < num2) {
+                p1++;
+            }
+            else {
+                p2++;
+            }
+        }
+        return ans;
+    }
+
+    /**
+     * Performs merge for the or search query
+     *
+     * @param list1 a new list of results
+     * @param list2 old list
+     * @return a merged list
+     */
+
+    private List<Integer> orMerge(List<Integer> list1, List<Integer> list2) {
+        // Collections.sort(list1);
+        // Collections.sort(list2);
+        // lists are considered to be sorted already
+        if (list1.size() == 0 && list2.size() == 0) {
+            return null;
+        }
+        if (list1.size() == 0) {
+            return list2;
+        }
+        if (list2.size() == 0) {
+            return list1;
+        }
+        List<Integer> ans = new ArrayList<>();
+        int p1 = 0;
+        int p2 = 0;
+        while (p1 < list1.size() && p2 < list2.size()) {
+            int num1 = list1.get(p1);
+            int num2 = list2.get(p2);
+            if (num1 == num2) {
+                ans.add(num1);
+                p1++;
+                p2++;
+            }
+            else if (num1 < num2) {
+                ans.add(num1);
+                p1++;
+            }
+            else {
+                ans.add(num2);
+                p2++;
+            }
+        }
+        while (p1 < list1.size()) {
+            int num1 = list1.get(p1);
+            ans.add(num1);
+            p1++;
+        }
+        while (p2 < list2.size()) {
+            int num2 = list2.get(p2);
+            ans.add(num2);
+            p2++;
         }
         return ans;
     }
