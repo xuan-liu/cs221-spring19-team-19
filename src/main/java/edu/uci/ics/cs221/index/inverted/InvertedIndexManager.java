@@ -117,21 +117,29 @@ public class InvertedIndexManager {
         }
         docID = 0;
 
-        // store the len(keywords), keywords, offset(list), len(list) in segmentXXa,
-        // with the first page have the total number of bytes the remaining pages will use
+        // store the len(keywords), keywords, page(list), offset(list) (the offset of this page), len(list)
+        // in segmentXXa, with the first page have the total number of bytes the remaining pages will use
 
         Path wordsPath = Paths.get(indexFolder+"segment" + segmentID + "a");
         PageFileChannel wordsFileChannel = PageFileChannel.createOrOpen(wordsPath);
 
         ByteBuffer wordsBuffer = ByteBuffer.allocate(5000 * invertedLists.size());
         int offset = 0;
+        int pageID = 0;
+//        int totalListLen = 0;
         for (String word: invertedLists.keySet()) {
             wordsBuffer.putInt(word.length());
             byte[] tmp = word.getBytes();
             wordsBuffer.put(tmp);
+            wordsBuffer.putInt(pageID);
             wordsBuffer.putInt(offset);
             wordsBuffer.putInt(invertedLists.get(word).size());
             offset += invertedLists.get(word).size();
+//            offset = totalListLen - pageID * wordsFileChannel.PAGE_SIZE;
+            if (offset >= wordsFileChannel.PAGE_SIZE) {
+                pageID += 1;
+                offset -= wordsFileChannel.PAGE_SIZE;
+            }
         }
 
         // write the first page with an integer, which is the total number of bytes
@@ -579,6 +587,7 @@ public class InvertedIndexManager {
             int wordLen = wordsBuffer.getInt();
             byte[] wordb = new byte[wordLen];
             wordsBuffer.get(wordb, 0, wordLen);
+            int listPage = wordsBuffer.getInt();
             int listOff = wordsBuffer.getInt();
             int listLen = wordsBuffer.getInt();
             String words = new String(wordb);
