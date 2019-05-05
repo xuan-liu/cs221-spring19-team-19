@@ -24,6 +24,7 @@ import java.util.*;
  *
  * Please refer to the project 2 wiki page for implementation guidelines.
  */
+
 public class InvertedIndexManager {
 
     /**
@@ -32,6 +33,7 @@ public class InvertedIndexManager {
      *
      * In test cases, the default flush threshold could possibly be set to any number.
      */
+    
     public static int DEFAULT_FLUSH_THRESHOLD = 1000;
 
     /**
@@ -40,6 +42,7 @@ public class InvertedIndexManager {
      *
      * In test cases, the default merge threshold could possibly be set to any number.
      */
+    
     public static int DEFAULT_MERGE_THRESHOLD = 8;
 
     private Map<String, List<Integer>> invertedLists;
@@ -62,6 +65,7 @@ public class InvertedIndexManager {
     /**
      * Creates an inverted index manager with the folder and an analyzer
      */
+    
     public static InvertedIndexManager createOrOpen(String indexFolder, Analyzer analyzer) {
         try {
             Path indexFolderPath = Paths.get(indexFolder);
@@ -85,6 +89,7 @@ public class InvertedIndexManager {
      * Document should live in a in-memory buffer until `flush()` is called to write the segment to disk.
      * @param document
      */
+    
     public void addDocument(Document document) {
         List<String> wordList = analyzer.analyze(document.getText());
         for (String word: wordList) {
@@ -110,6 +115,7 @@ public class InvertedIndexManager {
      * Flushes all the documents in the in-memory segment buffer to disk. If the buffer is empty, it should not do anything.
      * flush() writes the segment to disk containing the posting list and the corresponding document store.
      */
+    
     public void flush() {
         // If the buffer is empty, return
         if (invertedLists.size() == 0 && documents.size() == 0) {
@@ -189,6 +195,7 @@ public class InvertedIndexManager {
     /**
      * Merges all the disk segments of the inverted index pair-wise.
      */
+    
     public void mergeAllSegments() {
         // merge only happens at even number of segments
         Preconditions.checkArgument(getNumSegments() % 2 == 0);
@@ -203,6 +210,7 @@ public class InvertedIndexManager {
      * @param keyword keyword, cannot be null.
      * @return a iterator of documents matching the query
      */
+    
     public Iterator<Document> searchQuery(String keyword) {
         // check if the keyword is not null
         Preconditions.checkNotNull(keyword);
@@ -248,6 +256,7 @@ public class InvertedIndexManager {
      * @param keywords a list of keywords in the AND query
      * @return a iterator of documents matching the query
      */
+    
     public Iterator<Document> searchAndQuery(List<String> keywords) {
         Preconditions.checkNotNull(keywords);
         int totalSegments = getNumSegments();
@@ -301,6 +310,7 @@ public class InvertedIndexManager {
      * @param keywords a list of keywords in the OR query
      * @return a iterator of documents matching the query
      */
+    
     public Iterator<Document> searchOrQuery(List<String> keywords) {
         Preconditions.checkNotNull(keywords);
         int totalSegments = getNumSegments();
@@ -515,6 +525,7 @@ public class InvertedIndexManager {
     /**
      * Iterates through all the documents in all disk segments.
      */
+    
     public Iterator<Document> documentIterator() {
         if (segmentID == 0) {
             return null;
@@ -535,10 +546,6 @@ public class InvertedIndexManager {
         return docsIterator;
     }
 
-    /**
-     * Deletes all documents in all disk segments of the inverted index that match the query.
-     * @param keyword
-     */
     /**
      * Deletes all documents in all disk segments of the inverted index that match the query.
      * @param keyword
@@ -613,6 +620,7 @@ public class InvertedIndexManager {
      * @param segmentNum n-th segment in the inverted index (start from 0).
      * @return in-memory data structure with all contents in the index segment, null if segmentNum don't exist.
      */
+    
     public InvertedIndexSegmentForTest getIndexSegment(int segmentNum) {
         if (segmentID == 0) {
             return null;
