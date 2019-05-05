@@ -196,8 +196,30 @@ public class InvertedIndexManager {
      */
     public Iterator<Document> searchQuery(String keyword) {
         Preconditions.checkNotNull(keyword);
-
-        throw new UnsupportedOperationException();
+        List<String> word = analyzer.analyze(keyword);
+        if (word.size() == 0 || word.get(0).length() == 0) {
+            return null;
+        }
+        keyword = word.get(0);
+        List<Document> docs = new ArrayList<>();
+        int totalSegments = getNumSegments();
+        for (int seg = 0; seg < totalSegments; seg++) {
+            Path dictSeg = Paths.get(indexFolder + "segment" + seg + "a");
+            PageFileChannel pfc = PageFileChannel.createOrOpen(dictSeg);
+            ByteBuffer bb = pfc.readAllPages();
+            bb.rewind();
+            int cap = bb.getInt();
+            bb.limit(PageFileChannel.PAGE_SIZE + cap);
+            List<Integer> info = findKeyword(bb, keyword, seg);
+            if (info == null) {
+                continue;
+            }
+            List<Document> segmentDocs = getDocuments(seg, info);
+            for (Document temp : segmentDocs) {
+                docs.add(temp);
+            }
+        }
+        return docs.iterator();
     }
 
     /**
@@ -222,6 +244,58 @@ public class InvertedIndexManager {
         Preconditions.checkNotNull(keywords);
 
         throw new UnsupportedOperationException();
+    }
+    
+    private List<Integer> findKeyword(ByteBuffer bb, String target, int segID) {
+        bb.position(PageFileChannel.PAGE_SIZE);
+        while (bb.hasRemaining()) {
+            int wordLength = bb.getInt();
+            if (wordLength == 0) {
+                break;
+            }
+            byte[] word = new byte[wordLength];
+            for (int i = 0; i < wordLength; i++) {
+                word[i] = bb.get();
+            }
+            String dictWord = new String(word);
+            int pageID = bb.getInt();
+            int offset = bb.getInt();
+            int length = bb.getInt();
+            if (dictWord.equals(target)) {
+                List<Integer> ans = getIndexList(segID, pageID, offset, length);
+                return ans;
+            }
+        }
+        return null;
+    }
+
+    public List<Document> getDocuments(int segID, List<Integer> idList) {
+        List<Document> ans = new ArrayList<>();
+        String path = indexFolder + "segment" + segID + ".db";
+        DocumentStore ds = MapdbDocStore.createOrOpen(path);
+        Iterator<Integer> docsIterator = ds.keyIterator();
+        while (docsIterator.hasNext()) {
+            int tempID = docsIterator.next();
+            if (idList.contains(tempID)) {
+                ans.add(ds.getDocument(tempID));
+            }
+        }
+        ds.close();
+        return ans;
+    }
+
+    private List<Integer> getIndexList(int segID, int pageID, int offset, int length) {
+        Path path = Paths.get(indexFolder + "segment" + segID + "b");
+        PageFileChannel pfc = PageFileChannel.createOrOpen(path);
+        ByteBuffer indexBuffer = pfc.readPage(pageID);
+        indexBuffer.rewind();
+        indexBuffer.position(offset);
+        List<Integer> ans = new ArrayList<>();
+        for (int i = 0; i < length; i++) {
+            int temp = indexBuffer.getInt();
+            ans.add(temp);
+        }
+        return ans;
     }
 
     /**
