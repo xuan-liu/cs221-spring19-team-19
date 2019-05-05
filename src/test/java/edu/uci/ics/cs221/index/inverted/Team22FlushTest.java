@@ -20,7 +20,7 @@ import java.util.*;
 import static org.junit.Assert.*;
 
 public class Team22FlushTest {
-    String folder = "./index/Team22FlushTest";
+    String folder = "./index/Team22FlushTest/";
 
     InvertedIndexManager indexManager;
     InvertedIndexSegmentForTest indexManagerTest;
@@ -95,7 +95,7 @@ public class Team22FlushTest {
                 " use of graphic records (documents), to store information and make " +
                 "it available, have been listed by Hyslop: " +
                 "A, recording information in documents; B, " +
-                "storing recorded information—documentary items; ");
+                "storing recorded items; ");
         Document doc5 = new Document("A general theory of information retrieval would cover");
 
         ArrayList<Document> seg1Docs = new ArrayList<>();
