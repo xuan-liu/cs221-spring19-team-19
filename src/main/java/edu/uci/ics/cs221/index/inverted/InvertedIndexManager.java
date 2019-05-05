@@ -539,8 +539,61 @@ public class InvertedIndexManager {
      * Deletes all documents in all disk segments of the inverted index that match the query.
      * @param keyword
      */
+    /**
+     * Deletes all documents in all disk segments of the inverted index that match the query.
+     * @param keyword
+     */
+
     public void deleteDocuments(String keyword) {
-        throw new UnsupportedOperationException();
+        List<String> word = analyzer.analyze(keyword);
+        keyword = word.get(0);
+        if (keyword.length() == 0 || word.size() == 0) {
+            return;
+        }
+        int totalSegments = getNumSegments();
+        for (int seg = 0; seg < totalSegments; seg++) {
+            Path dictSeg = Paths.get(indexFolder + "segment" + seg + "a");
+            PageFileChannel pfc = PageFileChannel.createOrOpen(dictSeg);
+            // load the dictionary
+            ByteBuffer bb = pfc.readAllPages();
+            pfc.close();
+            bb.rewind();
+            int cap = bb.getInt();
+            bb.position(PageFileChannel.PAGE_SIZE);
+            List<Integer> info = findKeyword(bb, keyword, seg);
+            if (info == null) {
+                continue;
+            }
+            Path deleted = Paths.get(indexFolder + "segment" + seg + "d");
+            pfc = PageFileChannel.createOrOpen(deleted);
+            ByteBuffer deletedBuffer = ByteBuffer.allocate(info.size() * 4);
+            for (int post : info) {
+                deletedBuffer.putInt(post);
+            }
+            pfc.appendAllBytes(deletedBuffer);
+            pfc.close();
+        }
+    }
+
+    /**
+     * Checks if the docID is in the list of deleted IDs.
+     * @param segID the ID of the segment
+     * @param docID the document ID
+     */
+    
+    private boolean isDeleted(int segID, int docID) {
+        Path path = Paths.get(indexFolder + "segment" + segID + "d");
+        PageFileChannel pfc = PageFileChannel.createOrOpen(path);
+        ByteBuffer buf = pfc.readAllPages();
+        pfc.close();
+        buf.rewind();
+        while (buf.hasRemaining()) {
+            int id = buf.getInt();
+            if (id == docID) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
