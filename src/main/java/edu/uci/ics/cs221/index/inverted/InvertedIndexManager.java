@@ -499,13 +499,14 @@ public class InvertedIndexManager {
         // check if the keyword is not null
         Preconditions.checkNotNull(keyword);
         List<String> word = analyzer.analyze(keyword);
+        List<Document> docs = new ArrayList<>();
         // check if the processed keyword is not null
         if (word.size() == 0 || word.get(0).length() == 0) {
-            return null;
+            return docs.iterator();
         }
         keyword = word.get(0);
         // documents that match the search
-        List<Document> docs = new ArrayList<>();
+        
         int totalSegments = getNumSegments();
         // searching each individual segment
         for (int seg = 0; seg < totalSegments; seg++) {
@@ -561,7 +562,7 @@ public class InvertedIndexManager {
             for (String keyword : keywords) {
                 List<String> word = analyzer.analyze(keyword);
                 if (word.size() == 0 || word.get(0).length() == 0) {
-                    return null;
+                    return andDocs.iterator();
                 }
                 keyword = word.get(0);
                 bb.position(PageFileChannel.PAGE_SIZE);
