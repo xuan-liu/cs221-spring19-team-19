@@ -29,7 +29,7 @@ public class Team14MergeTest {
             new Document("Abstraction is often one floor above you."),
             new Document("Everyone was busy, so I went to the movie alone."),
             new Document("Please wait outside of the house."),
-            new Document("Wednesday is hump day, but has anyone asked the camel if he’s happy about it?"),
+            new Document("Wednesday is hump day, but has anyone asked the camel if he's happy about it?"),
             new Document("He told us a very exciting adventure story."),
             new Document("My Mom tries to be cool by saying that she likes all the same things that I do."),
             new Document("She advised him to come back at once."),

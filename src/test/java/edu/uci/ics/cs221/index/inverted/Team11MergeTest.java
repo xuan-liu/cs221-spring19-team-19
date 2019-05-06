@@ -19,7 +19,7 @@ import java.util.List;
 import java.io.File;
 
 public class Team11MergeTest {
-    String indexPath = "./index/Team11MergeTest";
+    String indexPath = "./index/Team11MergeTest/";
 
     Document[] documents = new Document[] {
             new Document("import edu uci ics cs221 analysis  Analyzer"),
