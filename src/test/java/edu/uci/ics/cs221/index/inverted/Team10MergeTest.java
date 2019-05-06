@@ -15,7 +15,7 @@ import static org.junit.Assert.assertEquals;
 
 public class Team10MergeTest {
 
-    private String path = "./index/Team10MergeSearchTest";
+    private String path = "./index/Team10MergeSearchTest/";
 
     @Test
     public void test1() {
