@@ -50,6 +50,7 @@ public class InvertedIndexManager {
      */
     
     public static int DEFAULT_MERGE_THRESHOLD = 8;
+    public static int STORE_PARAMETER = 5000;
 
     private Map<String, List<Integer>> invertedLists;
     private Map<Integer, Document> documents;
@@ -73,9 +74,6 @@ public class InvertedIndexManager {
     
     public static InvertedIndexManager createOrOpen(String indexFolder, Analyzer analyzer) {
         try {
-//            if (!indexFolder.endsWith("/")) {
-//                indexFolder = indexFolder + "/";
-//            }
             Path indexFolderPath = Paths.get(indexFolder);
             if (Files.exists(indexFolderPath) && Files.isDirectory(indexFolderPath)) {
                 if (Files.isDirectory(indexFolderPath)) {
@@ -134,26 +132,26 @@ public class InvertedIndexManager {
         // store the len(keywords), keywords, page(list), offset(list) (the offset of this page), len(list)
         // in segmentXXa, with the first page have the total number of bytes the remaining pages will use
 
-        Path wordsPath = Paths.get(indexFolder+"segment" + segmentID + "a");
+        Path wordsPath = Paths.get(indexFolder + "/segment" + segmentID + "a");
         PageFileChannel wordsFileChannel = PageFileChannel.createOrOpen(wordsPath);
 
-        ByteBuffer wordsBuffer = ByteBuffer.allocate(5000 * invertedLists.size());
+        ByteBuffer wordsBuffer = ByteBuffer.allocate(STORE_PARAMETER * invertedLists.size());
         int offset = 0;
         int pageID = 0;
 
         for (String word: invertedLists.keySet()) {
             wordsBuffer = writeWordBuffer(wordsBuffer, word, pageID, offset, invertedLists.get(word).size());
             offset += invertedLists.get(word).size() * 4;
-            if (offset >= wordsFileChannel.PAGE_SIZE) {
+            if (offset >= PageFileChannel.PAGE_SIZE) {
                 pageID += 1;
-                offset -= wordsFileChannel.PAGE_SIZE;
+                offset -= PageFileChannel.PAGE_SIZE;
             }
         }
 
         // write the first page with an integer, which is the total number of bytes
         // the remaining pages will use
 
-        ByteBuffer limitBuffer = ByteBuffer.allocate(wordsFileChannel.PAGE_SIZE);
+        ByteBuffer limitBuffer = ByteBuffer.allocate(PageFileChannel.PAGE_SIZE);
         limitBuffer.putInt(wordsBuffer.position());
         wordsFileChannel.appendPage(limitBuffer);
 
@@ -162,10 +160,10 @@ public class InvertedIndexManager {
 
         // store all the lists in segmentXXb
 
-        Path listPath = Paths.get(indexFolder+"segment" + segmentID + "b");
+        Path listPath = Paths.get(indexFolder+"/segment" + segmentID + "b");
         PageFileChannel listFileChannel = PageFileChannel.createOrOpen(listPath);
 
-        ByteBuffer listBuffer = ByteBuffer.allocate(5000 * invertedLists.size());
+        ByteBuffer listBuffer = ByteBuffer.allocate(STORE_PARAMETER * invertedLists.size());
         for (String word: invertedLists.keySet()) {
             List<Integer> postingList = invertedLists.get(word);
             listBuffer = writeListBuffer(listBuffer, postingList);
@@ -175,7 +173,7 @@ public class InvertedIndexManager {
         listFileChannel.close();
 
         // store all the documents in segmentXX.db
-        DocumentStore ds = MapdbDocStore.createWithBulkLoad(indexFolder+"segment" + segmentID + ".db",documents.entrySet().iterator());
+        DocumentStore ds = MapdbDocStore.createWithBulkLoad(indexFolder + "/segment" + segmentID + ".db",documents.entrySet().iterator());
         ds.close();
 
         // clear the invertedLists and documents
@@ -234,11 +232,11 @@ public class InvertedIndexManager {
 
     private void merge(int segID1, int segID2) {
         // read two segmentXXa into two buffer and delete these two segmentXXa
-        Path path = Paths.get(indexFolder + "segment" + segID1 + "a");
+        Path path = Paths.get(indexFolder + "/segment" + segID1 + "a");
         PageFileChannel pfc = PageFileChannel.createOrOpen(path);
         ByteBuffer bb1 = pfc.readAllPages();
         pfc.close();
-        File file = new File(indexFolder + "segment" + segID1 + "a");
+        File file = new File(indexFolder + "/segment" + segID1 + "a");
         file.delete();
 
         bb1.rewind();
@@ -246,11 +244,11 @@ public class InvertedIndexManager {
         bb1.limit(PageFileChannel.PAGE_SIZE + cap1);
         bb1.position(PageFileChannel.PAGE_SIZE);
 
-        path = Paths.get(indexFolder + "segment" + segID2 + "a");
+        path = Paths.get(indexFolder + "/segment" + segID2 + "a");
         pfc = PageFileChannel.createOrOpen(path);
         ByteBuffer bb2 = pfc.readAllPages();
         pfc.close();
-        file = new File(indexFolder + "segment" + segID2 + "a");
+        file = new File(indexFolder + "/segment" + segID2 + "a");
         file.delete();
         bb2.rewind();
         int cap2 = bb2.getInt();
@@ -258,13 +256,13 @@ public class InvertedIndexManager {
         bb2.position(PageFileChannel.PAGE_SIZE);
 
         // read num of documents in segment ID1
-        DocumentStore ds = MapdbDocStore.createOrOpen(indexFolder+"segment" + segID1 + ".db");
+        DocumentStore ds = MapdbDocStore.createOrOpen(indexFolder + "/segment" + segID1 + ".db");
         int numDoc1 = (int) ds.size(); //todo:change it later
         ds.close();
 
         // merge the inverted lists of the two segments
-        ByteBuffer wordsBuffer = ByteBuffer.allocate(10*(cap1 + cap2));
-        ByteBuffer listBuffer = ByteBuffer.allocate(5000*(cap1 + cap2)); //todo:change it later
+        ByteBuffer wordsBuffer = ByteBuffer.allocate(10 * (cap1 + cap2));
+        ByteBuffer listBuffer = ByteBuffer.allocate(STORE_PARAMETER * (cap1 + cap2));
         ByteBuffer limitBuffer = ByteBuffer.allocate(PageFileChannel.PAGE_SIZE);
 
         int wordLen1 = bb1.getInt();
@@ -454,37 +452,37 @@ public class InvertedIndexManager {
 
         limitBuffer.putInt(wordsBuffer.position());
 
-        path = Paths.get(indexFolder + "segment" + segID1/2 + "a");
+        path = Paths.get(indexFolder + "/segment" + segID1/2 + "a");
         PageFileChannel wordsFileChannel = PageFileChannel.createOrOpen(path);
         wordsFileChannel.appendPage(limitBuffer);
 
         wordsFileChannel.appendAllBytes(wordsBuffer);
         wordsFileChannel.close();
 
-        file = new File(indexFolder + "segment" + segID1 + "b");
+        file = new File(indexFolder + "/segment" + segID1 + "b");
         file.delete();
-        file = new File(indexFolder + "segment" + segID2 + "b");
+        file = new File(indexFolder + "/segment" + segID2 + "b");
         file.delete();
 
-        path = Paths.get(indexFolder+"segment" + segID1/2 + "b");
+        path = Paths.get(indexFolder + "/segment" + segID1/2 + "b");
         PageFileChannel listFileChannel = PageFileChannel.createOrOpen(path);
 
         listFileChannel.appendAllBytes(listBuffer);
         listFileChannel.close();
 
         // merge the documents of two segments
-        DocumentStore ds1 = MapdbDocStore.createOrOpen(indexFolder+"segment" + segID1 + ".db");
-        DocumentStore ds2 = MapdbDocStore.createOrOpen(indexFolder+"segment" + segID2 + ".db");
+        DocumentStore ds1 = MapdbDocStore.createOrOpen(indexFolder + "/segment" + segID1 + ".db");
+        DocumentStore ds2 = MapdbDocStore.createOrOpen(indexFolder + "/segment" + segID2 + ".db");
         Iterator<Map.Entry<Integer, Document>> itr2 = Iterators.transform(ds2.iterator(),
                 entry -> immutableEntry(entry.getKey() + numDoc1, entry.getValue()));
         Iterator<Map.Entry<Integer, Document>> itr = Iterators.concat(ds1.iterator(), itr2);
         ds1.close();
         ds2.close();
-        file = new File(indexFolder + "segment" + segID1 + ".db");
+        file = new File(indexFolder + "/segment" + segID1 + ".db");
         file.delete();
-        file = new File(indexFolder + "segment" + segID2 + ".db");
+        file = new File(indexFolder + "/segment" + segID2 + ".db");
         file.delete();
-        DocumentStore ds_new = MapdbDocStore.createWithBulkLoad(indexFolder+"segment" + segID1/2 + ".db", itr);
+        DocumentStore ds_new = MapdbDocStore.createWithBulkLoad(indexFolder + "/segment" + segID1/2 + ".db", itr);
         ds_new.close();
     }
 
@@ -511,7 +509,7 @@ public class InvertedIndexManager {
         int totalSegments = getNumSegments();
         // searching each individual segment
         for (int seg = 0; seg < totalSegments; seg++) {
-            Path dictSeg = Paths.get(indexFolder + "segment" + seg + "a");
+            Path dictSeg = Paths.get(indexFolder + "/segment" + seg + "a");
             PageFileChannel pfc = PageFileChannel.createOrOpen(dictSeg);
             // loading the dictionary
             ByteBuffer bb = pfc.readAllPages();
@@ -552,7 +550,7 @@ public class InvertedIndexManager {
         boolean flag = true;
         // search segments
         for (int seg = 0; seg < totalSegments; seg++) {
-            Path dictSeg = Paths.get(indexFolder + "segment" + seg + "a");
+            Path dictSeg = Paths.get(indexFolder + "/segment" + seg + "a");
             PageFileChannel pfc = PageFileChannel.createOrOpen(dictSeg);
             ByteBuffer bb = pfc.readAllPages();
             bb.rewind();
@@ -604,7 +602,7 @@ public class InvertedIndexManager {
         List<Document> orDocs = new ArrayList<>();
         // search each segment
         for (int seg = 0; seg < totalSegments; seg++) {
-            Path dictSeg = Paths.get(indexFolder + "segment" + seg + "a");
+            Path dictSeg = Paths.get(indexFolder + "/segment" + seg + "a");
             PageFileChannel pfc = PageFileChannel.createOrOpen(dictSeg);
             // load the dictionary
             ByteBuffer bb = pfc.readAllPages();
@@ -681,7 +679,7 @@ public class InvertedIndexManager {
 
     public List<Document> getDocuments(int segID, List<Integer> idList) {
         List<Document> ans = new ArrayList<>();
-        String path = indexFolder + "segment" + segID + ".db";
+        String path = indexFolder + "/segment" + segID + ".db";
         DocumentStore ds = MapdbDocStore.createOrOpen(path);
         Iterator<Integer> docsIterator = ds.keyIterator();
         while (docsIterator.hasNext()) {
@@ -705,7 +703,7 @@ public class InvertedIndexManager {
      */
 
     public List<Integer> getIndexList(int segID, int pageID, int offset, int length) {
-        Path path = Paths.get(indexFolder + "segment" + segID + "b");
+        Path path = Paths.get(indexFolder + "/segment" + segID + "b");
         PageFileChannel pfc = PageFileChannel.createOrOpen(path);
         ByteBuffer indexBuffer = pfc.readPage(pageID);
         indexBuffer.rewind();
@@ -818,12 +816,12 @@ public class InvertedIndexManager {
             return null;
         }
 
-        DocumentStore ds = MapdbDocStore.createOrOpen(indexFolder+"segment" + 0 + ".db");
+        DocumentStore ds = MapdbDocStore.createOrOpen(indexFolder + "/segment" + 0 + ".db");
         Iterator<Document> docsIterator = Iterators.transform(ds.iterator(), entry -> entry.getValue());
         ds.close();
 
         for (int i = 1; i < segmentID; i++) {
-            ds = MapdbDocStore.createOrOpen(indexFolder+"segment" + i + ".db");
+            ds = MapdbDocStore.createOrOpen(indexFolder + "/segment" + i + ".db");
             docsIterator = Iterators.concat(docsIterator, Iterators.transform(ds.iterator(), entry -> entry.getValue()));
             ds.close();
             System.out.println(i);
@@ -845,7 +843,7 @@ public class InvertedIndexManager {
         }
         int totalSegments = getNumSegments();
         for (int seg = 0; seg < totalSegments; seg++) {
-            Path dictSeg = Paths.get(indexFolder + "segment" + seg + "a");
+            Path dictSeg = Paths.get(indexFolder + "/segment" + seg + "a");
             PageFileChannel pfc = PageFileChannel.createOrOpen(dictSeg);
             // load the dictionary
             ByteBuffer bb = pfc.readAllPages();
@@ -857,7 +855,7 @@ public class InvertedIndexManager {
             if (info == null) {
                 continue;
             }
-            Path deleted = Paths.get(indexFolder + "segment" + seg + "d");
+            Path deleted = Paths.get(indexFolder + "/segment" + seg + "d");
             pfc = PageFileChannel.createOrOpen(deleted);
             ByteBuffer deletedBuffer = ByteBuffer.allocate(info.size() * 4);
             for (int post : info) {
@@ -875,7 +873,7 @@ public class InvertedIndexManager {
      */
     
     private boolean isDeleted(int segID, int docID) {
-        Path path = Paths.get(indexFolder + "segment" + segID + "d");
+        Path path = Paths.get(indexFolder + "/segment" + segID + "d");
         PageFileChannel pfc = PageFileChannel.createOrOpen(path);
         ByteBuffer buf = pfc.readAllPages();
         pfc.close();
@@ -917,7 +915,7 @@ public class InvertedIndexManager {
         Map<String, Integer> wordDic = new TreeMap<>();
 
         // read segmentXXa
-        Path wordsPath = Paths.get(indexFolder+"segment" + segmentNum + "a");
+        Path wordsPath = Paths.get(indexFolder + "/segment" + segmentNum + "a");
         PageFileChannel wordsFileChannel = PageFileChannel.createOrOpen(wordsPath);
 
         ByteBuffer wordsBuffer = wordsFileChannel.readAllPages();
@@ -943,7 +941,7 @@ public class InvertedIndexManager {
         wordsFileChannel.close();
 
         // read segmentXXb, build map<String, List<Integer>> invertedLists
-        Path listPath = Paths.get(indexFolder+"segment" + segmentNum + "b");
+        Path listPath = Paths.get(indexFolder + "/segment" + segmentNum + "b");
         PageFileChannel listFileChannel = PageFileChannel.createOrOpen(listPath);
         ByteBuffer listBuffer = listFileChannel.readAllPages();
 
@@ -960,7 +958,7 @@ public class InvertedIndexManager {
         listFileChannel.close();
 
         // read segmentXX.db, build map<Integer, Document> documents
-        DocumentStore ds = MapdbDocStore.createOrOpen(indexFolder+"segment" + segmentNum + ".db");
+        DocumentStore ds = MapdbDocStore.createOrOpen(indexFolder + "/segment" + segmentNum + ".db");
         Iterator<Map.Entry<Integer, Document>> itr = ds.iterator();
         while(itr.hasNext()) {
             Map.Entry<Integer, Document> entry = itr.next();
