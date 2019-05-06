@@ -1,3 +1,4 @@
+
 package edu.uci.ics.cs221.index.inverted;
 
 import com.google.common.base.Preconditions;
@@ -56,7 +57,6 @@ public class InvertedIndexManager {
     private int segmentID;
     private Analyzer analyzer;
     private String indexFolder;
-
 
     private InvertedIndexManager(String indexFolder, Analyzer analyzer) {
         this.analyzer = analyzer;
@@ -895,6 +895,7 @@ public class InvertedIndexManager {
      *
      * @return number of index segments.
      */
+    
     public int getNumSegments() {
         return segmentID;
     }
@@ -968,28 +969,5 @@ public class InvertedIndexManager {
         ds.close();
         return new InvertedIndexSegmentForTest(invertedLists, documents);
     }
-
-    public static void main(String args[]) {
-        Analyzer an = new ComposableAnalyzer(new PunctuationTokenizer(), token -> token);
-        String file = "./index/Team19FlushTest/";
-        InvertedIndexManager iim = createOrOpen(file, an);
-        iim.addDocument(new Document("cat dog"));
-        iim.addDocument(new Document("cat elephant"));
-        iim.flush();
-        iim.addDocument(new Document("cat dog"));
-        iim.addDocument(new Document("wolf dog"));
-        iim.flush();
-        iim.mergeAllSegments();
-
-//        System.out.println(iim.getNumSegments());
-
-//        InvertedIndexSegmentForTest test = iim.getIndexSegment(0);
-//        System.out.println(test.getInvertedLists().get("cat"));
-
-
-//        Iterator<Document> documentIterator = iim.documentIterator();
-//        while(documentIterator.hasNext()) {
-//            System.out.println(documentIterator.next().getText());
-//        }
-    }
+    
 }
