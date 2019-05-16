@@ -51,7 +51,9 @@ public class Team2StressTest {
 
         // copy full pride-and-prejudice for around 1500 times, every document is about 708KB, 1500 times is about 1GB
         for (int i = 0; i < 1500; i++) {
+//            System.out.println(i);
             invertedIndexManager.addDocument(new Document(text));
+
         }
         // Then, add two small test documents
         invertedIndexManager.addDocument(new Document("qwertyuiop elizabeth"));

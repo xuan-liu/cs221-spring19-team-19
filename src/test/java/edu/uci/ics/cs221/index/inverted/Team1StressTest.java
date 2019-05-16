@@ -24,7 +24,7 @@ import static org.junit.Assert.*;
 public class Team1StressTest {
     private InvertedIndexManager iim;
     private Analyzer analyzer = new NaiveAnalyzer();
-    private String indexDir = "index/Team1StressTest";
+    private String indexDir = "./index/Team1StressTest";
 
     private Document[] largeDocs = new Document[] {
             generateDoc(5),
