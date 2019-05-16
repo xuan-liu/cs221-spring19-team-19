@@ -9,6 +9,9 @@ import org.junit.Test;
 
 import java.io.File;
 
+import java.nio.ByteBuffer;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.*;
 
 import static org.junit.Assert.assertEquals;
@@ -53,6 +56,11 @@ public class Team10MergeTest {
         expecteddocuments.put(3,doc3);
 
         InvertedIndexSegmentForTest expected = new InvertedIndexSegmentForTest(expectedlist,expecteddocuments);
+        System.out.println(invertedmanager.getIndexSegment(1).getInvertedLists().get("a"));
+        Path path = Paths.get("./index/Team10MergeSearchTest/" + "/segment" + 1 + "b");
+        PageFileChannel pfc = PageFileChannel.createOrOpen(path);
+        ByteBuffer indexBuffer = pfc.readPage(0);
+        System.out.println(indexBuffer.getInt());
         invertedmanager.mergeAllSegments();
         assertEquals(expected,invertedmanager.getIndexSegment(0));
     }

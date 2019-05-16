@@ -20,6 +20,7 @@ import java.util.*;
 import java.io.File;
 
 import edu.uci.ics.cs221.analysis.*;
+
 import java.nio.charset.StandardCharsets;
 
 import static com.google.common.collect.Maps.immutableEntry;
@@ -140,7 +141,10 @@ public class InvertedIndexManager {
         int pageID = 0;
 
         for (String word: invertedLists.keySet()) {
-            wordsBuffer = writeWordBuffer(wordsBuffer, word, pageID, offset, invertedLists.get(word).size());
+            WordInfo wi = new WordInfo();
+            wi.setWordInfo(word, pageID, offset, invertedLists.get(word).size());
+            wi.writeOneWord(wordsBuffer);
+
             offset += invertedLists.get(word).size() * 4;
             if (offset >= PageFileChannel.PAGE_SIZE) {
                 pageID += 1;
@@ -148,13 +152,10 @@ public class InvertedIndexManager {
             }
         }
 
-        // write the first page with an integer, which is the total number of bytes
-        // the remaining pages will use
+        // write the first page
+        writeFirstPageOfWord(wordsFileChannel, wordsBuffer.position());
 
-        ByteBuffer limitBuffer = ByteBuffer.allocate(PageFileChannel.PAGE_SIZE);
-        limitBuffer.putInt(wordsBuffer.position());
-        wordsFileChannel.appendPage(limitBuffer);
-
+        // write the remaining page
         wordsFileChannel.appendAllBytes(wordsBuffer);
         wordsFileChannel.close();
 
@@ -166,7 +167,7 @@ public class InvertedIndexManager {
         ByteBuffer listBuffer = ByteBuffer.allocate(STORE_PARAMETER * invertedLists.size());
         for (String word: invertedLists.keySet()) {
             List<Integer> postingList = invertedLists.get(word);
-            listBuffer = writeListBuffer(listBuffer, postingList);
+            writeListBuffer(listBuffer, postingList);
         }
 
         listFileChannel.appendAllBytes(listBuffer);
@@ -188,30 +189,46 @@ public class InvertedIndexManager {
     }
 
     /**
-     * Write in a buffer with the information of len(keywords), keywords, page(list), offset(list), len(list)
+     * write the first page into the file with an integer, which is the total number of bytes
+     * the remaining pages will use
      */
 
-    private ByteBuffer writeWordBuffer(ByteBuffer bb, String word, int pageID, int offset, int len) {
-        bb.putInt(word.length());
-        byte[] tmp = word.getBytes(StandardCharsets.UTF_8);
-        bb.put(tmp);
-        bb.putInt(pageID);
-        bb.putInt(offset);
-        bb.putInt(len);
-        return bb;
+    private void writeFirstPageOfWord(PageFileChannel pfc, int lim) {
+        ByteBuffer limitBuffer = ByteBuffer.allocate(PageFileChannel.PAGE_SIZE);
+        limitBuffer.putInt(lim);
+        pfc.appendPage(limitBuffer);
+    }
+
+    /**
+     * read the first page on buffer, get the integer, and prepare the buffer for remaining reading
+     */
+
+    private int readFirstPageOfWord(ByteBuffer bb) {
+        bb.rewind();
+        int cap = bb.getInt();
+        bb.limit(PageFileChannel.PAGE_SIZE + cap);
+        bb.position(PageFileChannel.PAGE_SIZE);
+        return cap;
     }
 
     /**
      * Write in a buffer with the information of a list
      */
 
-    private ByteBuffer writeListBuffer(ByteBuffer bb, List<Integer> l) {
+    private void writeListBuffer(ByteBuffer bb, List<Integer> l) {
         for (int num: l) {
             bb.putInt(num);
         }
-        return bb;
     }
 
+    /**
+     * delete a file
+     */
+
+    private void deleteFile(String fileName) {
+        File file = new File(fileName);
+        file.delete();
+    }
 
     /**
      * Merges all the disk segments of the inverted index pair-wise.
@@ -221,175 +238,261 @@ public class InvertedIndexManager {
         // merge only happens at even number of segments
         Preconditions.checkArgument(getNumSegments() % 2 == 0);
         for (int i = 0; i < segmentID; i += 2) {
-            merge(i, i + 1);
+            int numDoc1 = mergeDocuments(i, i + 1);
+            mergeInvertedLists(i, i + 1, numDoc1);
         }
         segmentID = segmentID / 2;
     }
 
+
     /**
-     * Merges two disk segments
+     * Merges the documents of two disk segments, return the number of documents in segment ID1
      */
 
-    private void merge(int segID1, int segID2) {
+    private int mergeDocuments(int segID1, int segID2) {
+        System.out.println(segID1+","+segID2);
+        DocumentStore ds1 = MapdbDocStore.createOrOpen(indexFolder + "/segment" + segID1 + ".db");
+        DocumentStore ds2 = MapdbDocStore.createOrOpen(indexFolder + "/segment" + segID2 + ".db");
+        int numDoc1 = (int) ds1.size(); //todo:change it later
+
+
+        Iterator<Map.Entry<Integer, Document>> itr2 = Iterators.transform(ds2.iterator(),
+                entry -> immutableEntry(entry.getKey() + numDoc1, entry.getValue()));
+        Iterator<Map.Entry<Integer, Document>> itr = Iterators.concat(ds1.iterator(), itr2);
+        System.out.println(Iterators.size(itr2));
+        System.out.println(Iterators.size(itr));
+
+        ds1.close();
+        ds2.close();
+
+        deleteFile(indexFolder + "/segment" + segID1 + ".db");
+        deleteFile(indexFolder + "/segment" + segID2 + ".db");
+
+        DocumentStore ds_new = MapdbDocStore.createWithBulkLoad(indexFolder + "/segment" + segID1/2 + ".db", itr);
+        ds_new.close();
+
+        return numDoc1;
+    }
+
+    private class BufferAndList{
+        //todo: change later
+        ByteBuffer bb;
+        List<Integer> list;
+        int pageIDRead;
+
+        public BufferAndList(ByteBuffer bb, List<Integer> list, int pageIDRead){
+            this.bb = bb;
+            this.list = list;
+            this.pageIDRead = pageIDRead;
+        }
+    }
+
+    private BufferAndList getIndexListGivenLen(int segID, ByteBuffer bb, int pageIDRead, int len) {
+        List<Integer> list = new LinkedList<>();
+        int remainInt = (bb.limit() - bb.position()) / 4;
+        if (len >= remainInt) {
+            for (int i = 0; i < remainInt; i++) {
+                list.add(bb.getInt());
+            }
+            pageIDRead += 1;
+            bb = readIndexListPage(segID, pageIDRead);
+            for (int i = remainInt; i < len; i++) {
+                list.add(bb.getInt());
+            }
+        } else {
+            for (int i = 0; i < len; i++) {
+                list.add(bb.getInt());
+            }
+        }
+        return new BufferAndList(bb, list, pageIDRead);
+    }
+
+    private ByteBuffer readIndexListPage(int segID, int pageID) {
+        Path path = Paths.get(indexFolder + "/segment" + segID + "b");
+        PageFileChannel pfc = PageFileChannel.createOrOpen(path);
+        ByteBuffer indexBuffer = pfc.readPage(pageID);
+        indexBuffer.rewind();
+        pfc.close();
+        return indexBuffer;
+    }
+
+    private void addDocId(List<Integer> list, int n) {
+        for (int i = 0; i < list.size(); i++) {
+            list.set(i, list.get(i) + n);
+        }
+    }
+
+    private void writeListBufferByPage(PageFileChannel pfc, ByteBuffer bb, List<Integer> l) {
+        int remainInt = (bb.limit() - bb.position()) / 4;
+        if (l.size() >= remainInt) {
+            for (int i = 0; i < remainInt; i++) {
+                bb.putInt(l.get(i));
+            }
+            pfc.appendPage(bb);
+            bb.clear();
+            for (int i = remainInt; i < l.size(); i++) {
+                bb.putInt(l.get(i));
+            }
+        } else {
+            writeListBuffer(bb, l);
+        }
+    }
+
+    /**
+     * Merges the invertedLists of two disk segments
+     */
+
+    private void mergeInvertedLists(int segID1, int segID2, int numDoc1) {
         // read two segmentXXa into two buffer and delete these two segmentXXa
         Path path = Paths.get(indexFolder + "/segment" + segID1 + "a");
         PageFileChannel pfc = PageFileChannel.createOrOpen(path);
-        ByteBuffer bb1 = pfc.readAllPages();
+        ByteBuffer wb1 = pfc.readAllPages();
         pfc.close();
-        File file = new File(indexFolder + "/segment" + segID1 + "a");
-        file.delete();
-
-        bb1.rewind();
-        int cap1 = bb1.getInt();
-        bb1.limit(PageFileChannel.PAGE_SIZE + cap1);
-        bb1.position(PageFileChannel.PAGE_SIZE);
+        deleteFile(indexFolder + "/segment" + segID1 + "a");
+        int cap1 = readFirstPageOfWord(wb1);
 
         path = Paths.get(indexFolder + "/segment" + segID2 + "a");
         pfc = PageFileChannel.createOrOpen(path);
-        ByteBuffer bb2 = pfc.readAllPages();
+        ByteBuffer wb2 = pfc.readAllPages();
         pfc.close();
-        file = new File(indexFolder + "/segment" + segID2 + "a");
-        file.delete();
-        bb2.rewind();
-        int cap2 = bb2.getInt();
-        bb2.limit(PageFileChannel.PAGE_SIZE + cap2);
-        bb2.position(PageFileChannel.PAGE_SIZE);
-
-        // read num of documents in segment ID1
-        DocumentStore ds = MapdbDocStore.createOrOpen(indexFolder + "/segment" + segID1 + ".db");
-        int numDoc1 = (int) ds.size(); //todo:change it later
-        ds.close();
+        deleteFile(indexFolder + "/segment" + segID2 + "a");
+        int cap2 = readFirstPageOfWord(wb2);
 
         // merge the inverted lists of the two segments
         ByteBuffer wordsBuffer = ByteBuffer.allocate(10 * (cap1 + cap2));
-        ByteBuffer listBuffer = ByteBuffer.allocate(STORE_PARAMETER * (cap1 + cap2));
-        ByteBuffer limitBuffer = ByteBuffer.allocate(PageFileChannel.PAGE_SIZE);
+        ByteBuffer listBuffer = ByteBuffer.allocate(PageFileChannel.PAGE_SIZE);
 
-        int wordLen1 = bb1.getInt();
-        int wordLen2 = bb2.getInt();
-
-        byte[] word1 = new byte[wordLen1];
-        byte[] word2 = new byte[wordLen2];
-        bb1.get(word1, 0, wordLen1);
-        bb2.get(word2, 0, wordLen2);
-        String key1 = new String(word1,StandardCharsets.UTF_8);
-        String key2 = new String(word2,StandardCharsets.UTF_8);
-
-        int listPage1 = bb1.getInt();
-        int listPage2 = bb2.getInt();
-        int listOff1 = bb1.getInt();
-        int listOff2 = bb2.getInt();
-        int listLen1 = bb1.getInt();
-        int listLen2 = bb2.getInt();
+        WordInfo wi1 = new WordInfo();
+        wi1.readOneWord(wb1);
+        WordInfo wi2 = new WordInfo();
+        wi2.readOneWord(wb2);
 
         int offset = 0;
         int pageID = 0;
+        int pageIDRead1 = 0;
+        int pageIDRead2 = 0;
+        ByteBuffer lb1 = readIndexListPage(segID1, pageIDRead1);
+        ByteBuffer lb2 = readIndexListPage(segID2, pageIDRead2);
+
+        path = Paths.get(indexFolder + "/segment b tmp"); //todo:change later
+        PageFileChannel listFileChannel = PageFileChannel.createOrOpen(path);
 
         while (true) {
-            if (key1.equals(key2)) {
+//            System.out.println("key1:"+wi1.word+",key2:"+wi2.word);
+            if (wi1.word.equals(wi2.word)) {
                 // add them to the dictionary, find their lists and add them to the disk
                 // move both bb1 and bb2 to the next words
-                List<Integer> ls1 = getIndexList(segID1, listPage1, listOff1, listLen1);
-                List<Integer> ls2 = getIndexList(segID2, listPage2, listOff2, listLen2);
-                for (int i = 0; i < ls2.size(); i++) {
-                    ls2.set(i, ls2.get(i) + numDoc1);
-                }
+
+                //get the list according to the word
+                BufferAndList bl1 = getIndexListGivenLen(segID1, lb1, pageIDRead1, wi1.len);
+                lb1 = bl1.bb;
+                List<Integer> ls1 = bl1.list;
+                pageIDRead1 = bl1.pageIDRead;
+                BufferAndList bl2 = getIndexListGivenLen(segID2, lb2, pageIDRead2, wi2.len);
+                lb2 = bl2.bb;
+                List<Integer> ls2 = bl2.list;
+                pageIDRead2 = bl2.pageIDRead;
+
+                //for list 2, all docID add numDoc1
+                addDocId(ls2, numDoc1);
                 ls1.addAll(ls2);
 
-                wordsBuffer = writeWordBuffer(wordsBuffer, key1, pageID, offset, ls1.size());
+                //write the word info into buffer
+                WordInfo wi = new WordInfo();
+                wi.setWordInfo(wi1.word, pageID, offset, ls1.size());
+                wi.writeOneWord(wordsBuffer);
                 offset += ls1.size() * 4;
 
-                listBuffer = writeListBuffer(listBuffer, ls1);
+                //write the list info into buffer, if buffer full, append it into disk
+                writeListBufferByPage(listFileChannel, listBuffer, ls1);
 
-                if (!bb1.hasRemaining() || !bb2.hasRemaining()) {
+                //check whether bb1 and bb2 can move to the next words
+                if (!wb1.hasRemaining() || !wb2.hasRemaining()) {
                     break;
                 }
-                wordLen1 = bb1.getInt();
-                wordLen2 = bb2.getInt();
 
-                word1 = new byte[wordLen1];
-                word2 = new byte[wordLen2];
-                bb1.get(word1, 0, wordLen1);
-                bb2.get(word2, 0, wordLen2);
-                key1 = new String(word1,StandardCharsets.UTF_8);
-                key2 = new String(word2,StandardCharsets.UTF_8);
-
-                listPage1 = bb1.getInt();
-                listPage2 = bb2.getInt();
-                listOff1 = bb1.getInt();
-                listOff2 = bb2.getInt();
-                listLen1 = bb1.getInt();
-                listLen2 = bb2.getInt();
+                //move bb1 and bb2 to the next words
+                wi1 = new WordInfo();
+                wi1.readOneWord(wb1);
+                wi2 = new WordInfo();
+                wi2.readOneWord(wb2);
             }
-            else if (key1.compareTo(key2) > 0) {
+            else if (wi1.word.compareTo(wi2.word) > 0) {
                 // add key2 and its list to the disk, move bb2 to the next word
-                List<Integer> ls2 = getIndexList(segID2, listPage2, listOff2, listLen2);
+                BufferAndList bl2 = getIndexListGivenLen(segID2, lb2, pageIDRead2, wi2.len);
+                lb2 = bl2.bb;
+                List<Integer> ls2 = bl2.list;
+                pageIDRead2 = bl2.pageIDRead;
 
-                for (int i = 0; i < ls2.size(); i++) {
-                    ls2.set(i, ls2.get(i) + numDoc1);
-                }
-                wordsBuffer = writeWordBuffer(wordsBuffer, key2, pageID, offset, ls2.size());
+                addDocId(ls2, numDoc1);
+
+                WordInfo wi = new WordInfo();
+                wi.setWordInfo(wi2.word, pageID, offset, ls2.size());
+                wi.writeOneWord(wordsBuffer);
                 offset += ls2.size() * 4;
 
-                listBuffer = writeListBuffer(listBuffer, ls2);
+                writeListBufferByPage(listFileChannel, listBuffer, ls2);
 
-                if (!bb2.hasRemaining()) {
+                if (!wb2.hasRemaining()) {
                     if (offset >= PageFileChannel.PAGE_SIZE) {
                         pageID += 1;
                         offset -= PageFileChannel.PAGE_SIZE;
                     }
 
-                    List<Integer> ls1 = getIndexList(segID1, listPage1, listOff1, listLen1);
+                    BufferAndList bl1 = getIndexListGivenLen(segID1, lb1, pageIDRead1, wi1.len);
+                    lb1 = bl1.bb;
+                    List<Integer> ls1 = bl1.list;
+                    pageIDRead1 = bl1.pageIDRead;
 
-                    wordsBuffer = writeWordBuffer(wordsBuffer, key1, pageID, offset, ls1.size());
+                    wi = new WordInfo();
+                    wi.setWordInfo(wi1.word, pageID, offset, ls1.size());
+                    wi.writeOneWord(wordsBuffer);
                     offset += ls1.size() * 4;
 
-                    listBuffer = writeListBuffer(listBuffer, ls1);
-
+                    writeListBufferByPage(listFileChannel, listBuffer, ls1);
                     break;
                 }
-                wordLen2 = bb2.getInt();
-                word2 = new byte[wordLen2];
-                bb2.get(word2, 0, wordLen2);
-                key2 = new String(word2,StandardCharsets.UTF_8);
-
-                listPage2 = bb2.getInt();
-                listOff2 = bb2.getInt();
-                listLen2 = bb2.getInt();
+                wi2 = new WordInfo();
+                wi2.readOneWord(wb2);
             }
             else {
                 // add key1 and its list to the disk, move bb1 to the next word
-                List<Integer> ls1 = getIndexList(segID1, listPage1, listOff1, listLen1);
-                wordsBuffer = writeWordBuffer(wordsBuffer, key1, pageID, offset, ls1.size());
+                BufferAndList bl1 = getIndexListGivenLen(segID1, lb1, pageIDRead1, wi1.len);
+                lb1 = bl1.bb;
+                List<Integer> ls1 = bl1.list;
+                pageIDRead1 = bl1.pageIDRead;
+
+                WordInfo wi = new WordInfo();
+                wi.setWordInfo(wi1.word, pageID, offset, ls1.size());
+                wi.writeOneWord(wordsBuffer);
                 offset += ls1.size() * 4;
 
-                listBuffer = writeListBuffer(listBuffer, ls1);
+                writeListBufferByPage(listFileChannel, listBuffer, ls1);
 
-                if (!bb1.hasRemaining()) {
+                if (!wb1.hasRemaining()) {
                     if (offset >= PageFileChannel.PAGE_SIZE) {
                         pageID += 1;
                         offset -= PageFileChannel.PAGE_SIZE;
                     }
 
-                    List<Integer> ls2 = getIndexList(segID2, listPage2, listOff2, listLen2);
-                    for (int i = 0; i < ls2.size(); i++) {
-                        ls2.set(i, ls2.get(i) + numDoc1);
-                    }
-                    wordsBuffer = writeWordBuffer(wordsBuffer, key2, pageID, offset, ls2.size());
+                    BufferAndList bl2 = getIndexListGivenLen(segID2, lb2, pageIDRead2, wi2.len);
+                    lb2 = bl2.bb;
+                    List<Integer> ls2 = bl2.list;
+                    pageIDRead2 = bl2.pageIDRead;
+
+                    addDocId(ls2, numDoc1);
+
+                    wi = new WordInfo();
+                    wi.setWordInfo(wi2.word, pageID, offset, ls2.size());
+                    wi.writeOneWord(wordsBuffer);
                     offset += ls2.size() * 4;
 
-                    listBuffer = writeListBuffer(listBuffer, ls2);
+                    writeListBufferByPage(listFileChannel, listBuffer, ls2);
 
                     break;
                 }
-                wordLen1 = bb1.getInt();
-                word1 = new byte[wordLen1];
-                bb1.get(word1, 0, wordLen1);
-                key1 = new String(word1,StandardCharsets.UTF_8);
-
-                listPage1 = bb1.getInt();
-                listOff1 = bb1.getInt();
-                listLen1 = bb1.getInt();
+                wi1 = new WordInfo();
+                wi1.readOneWord(wb1);
             }
 
             if (offset >= PageFileChannel.PAGE_SIZE) {
@@ -398,92 +501,71 @@ public class InvertedIndexManager {
             }
         }
 
-        if (!bb1.hasRemaining() && bb2.hasRemaining()) {
-            while (bb2.hasRemaining()) {
+        if (!wb1.hasRemaining() && wb2.hasRemaining()) {
+            while (wb2.hasRemaining()) {
                 if (offset >= PageFileChannel.PAGE_SIZE) {
                     pageID += 1;
                     offset -= PageFileChannel.PAGE_SIZE;
                 }
 
-                wordLen2 = bb2.getInt();
-                word2 = new byte[wordLen2];
-                bb2.get(word2, 0, wordLen2);
-                key2 = new String(word2,StandardCharsets.UTF_8);
+                wi2 = new WordInfo();
+                wi2.readOneWord(wb2);
 
-                listPage2 = bb2.getInt();
-                listOff2 = bb2.getInt();
-                listLen2 = bb2.getInt();
+                BufferAndList bl2 = getIndexListGivenLen(segID2, lb2, pageIDRead2, wi2.len);
+                lb2 = bl2.bb;
+                List<Integer> ls2 = bl2.list;
+                pageIDRead2 = bl2.pageIDRead;
 
-                List<Integer> ls2 = getIndexList(segID2, listPage2, listOff2, listLen2);
-                for (int i = 0; i < ls2.size(); i++) {
-                    ls2.set(i, ls2.get(i) + numDoc1);
-                }
-                wordsBuffer = writeWordBuffer(wordsBuffer, key2, pageID, offset, ls2.size());
+                addDocId(ls2, numDoc1);
+                WordInfo wi = new WordInfo();
+                wi.setWordInfo(wi2.word, pageID, offset, ls2.size());
+                wi.writeOneWord(wordsBuffer);
                 offset += ls2.size() * 4;
 
-                listBuffer = writeListBuffer(listBuffer, ls2);
+                writeListBufferByPage(listFileChannel, listBuffer, ls2);
             }
         }
 
-        if (bb1.hasRemaining() && !bb2.hasRemaining()) {
-            while (bb1.hasRemaining()) {
+        if (wb1.hasRemaining() && !wb2.hasRemaining()) {
+            while (wb1.hasRemaining()) {
                 if (offset >= PageFileChannel.PAGE_SIZE) {
                     pageID += 1;
                     offset -= PageFileChannel.PAGE_SIZE;
                 }
 
-                wordLen1 = bb1.getInt();
-                word1 = new byte[wordLen1];
-                bb1.get(word1, 0, wordLen1);
-                key1 = new String(word1,StandardCharsets.UTF_8);
+                wi1 = new WordInfo();
+                wi1.readOneWord(wb1);
 
-                listPage1 = bb1.getInt();
-                listOff1 = bb1.getInt();
-                listLen1 = bb1.getInt();
+                BufferAndList bl1 = getIndexListGivenLen(segID1, lb1, pageIDRead1, wi1.len);
+                lb1 = bl1.bb;
+                List<Integer> ls1 = bl1.list;
+                pageIDRead1 = bl1.pageIDRead;
 
-                List<Integer> ls1 = getIndexList(segID1, listPage1, listOff1, listLen1);
-
-                wordsBuffer = writeWordBuffer(wordsBuffer, key1, pageID, offset, ls1.size());
+                WordInfo wi = new WordInfo();
+                wi.setWordInfo(wi1.word, pageID, offset, ls1.size());
+                wi.writeOneWord(wordsBuffer);
                 offset += ls1.size() * 4;
 
-                listBuffer = writeListBuffer(listBuffer, ls1);
+                writeListBufferByPage(listFileChannel, listBuffer, ls1);
             }
         }
-
-        limitBuffer.putInt(wordsBuffer.position());
-
-        path = Paths.get(indexFolder + "/segment" + segID1/2 + "a");
-        PageFileChannel wordsFileChannel = PageFileChannel.createOrOpen(path);
-        wordsFileChannel.appendPage(limitBuffer);
-
-        wordsFileChannel.appendAllBytes(wordsBuffer);
-        wordsFileChannel.close();
-
-        file = new File(indexFolder + "/segment" + segID1 + "b");
-        file.delete();
-        file = new File(indexFolder + "/segment" + segID2 + "b");
-        file.delete();
-
-        path = Paths.get(indexFolder + "/segment" + segID1/2 + "b");
-        PageFileChannel listFileChannel = PageFileChannel.createOrOpen(path);
 
         listFileChannel.appendAllBytes(listBuffer);
         listFileChannel.close();
+        deleteFile(indexFolder + "/segment" + segID1 + "b");
+        deleteFile(indexFolder + "/segment" + segID2 + "b");
 
-        // merge the documents of two segments
-        DocumentStore ds1 = MapdbDocStore.createOrOpen(indexFolder + "/segment" + segID1 + ".db");
-        DocumentStore ds2 = MapdbDocStore.createOrOpen(indexFolder + "/segment" + segID2 + ".db");
-        Iterator<Map.Entry<Integer, Document>> itr2 = Iterators.transform(ds2.iterator(),
-                entry -> immutableEntry(entry.getKey() + numDoc1, entry.getValue()));
-        Iterator<Map.Entry<Integer, Document>> itr = Iterators.concat(ds1.iterator(), itr2);
-        ds1.close();
-        ds2.close();
-        file = new File(indexFolder + "/segment" + segID1 + ".db");
-        file.delete();
-        file = new File(indexFolder + "/segment" + segID2 + ".db");
-        file.delete();
-        DocumentStore ds_new = MapdbDocStore.createWithBulkLoad(indexFolder + "/segment" + segID1/2 + ".db", itr);
-        ds_new.close();
+        File f1 = new File(indexFolder + "/segment b tmp");
+        File f2 = new File(indexFolder + "/segment" + segID1/2 + "b");
+        f1.renameTo(f2);
+
+        path = Paths.get(indexFolder + "/segment" + segID1/2 + "a");
+        PageFileChannel wordsFileChannel = PageFileChannel.createOrOpen(path);
+
+        writeFirstPageOfWord(wordsFileChannel, wordsBuffer.position());
+
+        wordsFileChannel.appendAllBytes(wordsBuffer);
+        wordsFileChannel.close();
     }
 
     /**
@@ -825,7 +907,6 @@ public class InvertedIndexManager {
             ds = MapdbDocStore.createOrOpen(indexFolder + "/segment" + i + ".db");
             docsIterator = Iterators.concat(docsIterator, Iterators.transform(ds.iterator(), entry -> entry.getValue()));
             ds.close();
-            System.out.println(i);
         }
 
         return docsIterator;
@@ -968,5 +1049,40 @@ public class InvertedIndexManager {
         ds.close();
         return new InvertedIndexSegmentForTest(invertedLists, documents);
     }
-    
+
+    public static class Test{
+        ByteBuffer bb;
+        public Test(ByteBuffer bb) {
+            this.bb = bb;
+        }
+    }
+
+    public static Test test(ByteBuffer bb) {
+//        bb.putInt(2);
+        ByteBuffer bb1 = ByteBuffer.allocate(60);
+        bb1.putInt(2);
+        bb = bb1;
+        return new Test(bb);
+//        return bb;
+    }
+
+    public static void main(String[] args) {
+        ByteBuffer bb = ByteBuffer.allocate(50);
+        System.out.println(bb);
+//        test(bb);
+        System.out.println(test(bb).bb);
+
+//        WordInfo wi = new WordInfo();
+//        wi.setWordInfo("a",1,1,1);
+//        wi.writeWordBuffer(bb);
+//        System.out.println(bb);
+//
+//        bb.rewind();
+//
+//        WordInfo wii = new WordInfo();
+//        wii.readWordBuffer(bb);
+//        System.out.println(bb);
+//        System.out.println(wii.word);
+    }
+
 }
