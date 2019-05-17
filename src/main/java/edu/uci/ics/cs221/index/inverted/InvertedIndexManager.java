@@ -124,7 +124,6 @@ public class InvertedIndexManager {
      */
     
     public void flush() {
-//        System.out.println("flush!");
         // If the buffer is empty, return
         if (invertedLists.size() == 0 && documents.size() == 0) {
             return;
@@ -236,7 +235,6 @@ public class InvertedIndexManager {
      */
     
     public void mergeAllSegments() {
-//        System.out.println("merge!");
         // merge only happens at even number of segments
         Preconditions.checkArgument(getNumSegments() % 2 == 0);
         for (int i = 0; i < segmentID; i += 2) {
@@ -252,7 +250,6 @@ public class InvertedIndexManager {
      */
 
     private int mergeDocuments(int segID1, int segID2) {
-//        System.out.println(segID1+","+segID2);
         DocumentStore ds1 = MapdbDocStore.createOrOpen(indexFolder + "/segment" + segID1 + ".db");
         DocumentStore ds2 = MapdbDocStore.createOrOpen(indexFolder + "/segment" + segID2 + ".db");
         int numDoc1 = (int) ds1.size();
@@ -261,8 +258,6 @@ public class InvertedIndexManager {
         Iterator<Map.Entry<Integer, Document>> itr2 = Iterators.transform(ds2.iterator(),
                 entry -> immutableEntry(entry.getKey() + numDoc1, entry.getValue()));
         Iterator<Map.Entry<Integer, Document>> itr = Iterators.concat(ds1.iterator(), itr2);
-//        System.out.println(Iterators.size(itr2));
-//        System.out.println(Iterators.size(itr));
 
         ds1.close();
         ds2.close();
@@ -275,6 +270,10 @@ public class InvertedIndexManager {
 
         return numDoc1;
     }
+
+    /**
+     * A help class to method getIndexListGivenLen
+     */
 
     private class BufferAndList{
         //todo: change later
@@ -289,12 +288,15 @@ public class InvertedIndexManager {
         }
     }
 
+    /**
+     * Get a list of a word in given segment, using the length of the list
+     */
+
     private BufferAndList getIndexListGivenLen(int segID, ByteBuffer bb, int pageIDRead, int len) {
         List<Integer> list = new LinkedList<>();
         int remainInt = (bb.limit() - bb.position()) / 4;
         int lSize = len;
         while (lSize / remainInt >= 1) {
-//            System.out.println(lSize+","+remainInt);
             for (int i = 0; i < remainInt; i++) {
                 list.add(bb.getInt());
             }
@@ -309,6 +311,10 @@ public class InvertedIndexManager {
         return new BufferAndList(bb, list, pageIDRead);
     }
 
+    /**
+     * read a page in a given segment into buffer
+     */
+
     private ByteBuffer readIndexListPage(int segID, int pageID) {
         Path path = Paths.get(indexFolder + "/segment" + segID + "b");
         PageFileChannel pfc = PageFileChannel.createOrOpen(path);
@@ -318,18 +324,26 @@ public class InvertedIndexManager {
         return indexBuffer;
     }
 
+    /**
+     * Add the a number n to all the elements in a list
+     */
+
     private void addDocId(List<Integer> list, int n) {
         for (int i = 0; i < list.size(); i++) {
             list.set(i, list.get(i) + n);
         }
     }
 
+    /**
+     * Write the List of a word into buffer, if the list length is larger than the page size,
+     * append the page and open another buffer
+     */
+
     private void writeListBufferByPage(PageFileChannel pfc, ByteBuffer bb, List<Integer> l) {
         int lSize = l.size();
         int remainInt = (bb.limit() - bb.position()) / 4;
         int lPos = 0;
         while (lSize / remainInt >= 1) {
-//            System.out.println(lSize+","+remainInt);
             for (int i = 0; i < remainInt; i++, lPos++) {
                 bb.putInt(l.get(lPos));
             }
@@ -339,7 +353,6 @@ public class InvertedIndexManager {
             remainInt = PageFileChannel.PAGE_SIZE / 4;
         }
         for (int i = 0; i < lSize; i++, lPos++) {
-//            System.out.println(l.get(lPos));
             bb.putInt(l.get(lPos));
         }
     }
@@ -384,7 +397,6 @@ public class InvertedIndexManager {
         PageFileChannel listFileChannel = PageFileChannel.createOrOpen(path);
 
         while (true) {
-//            System.out.println("key1:"+wi1.word+",key2:"+wi2.word);
             if (wi1.word.equals(wi2.word)) {
                 // add them to the dictionary, find their lists and add them to the disk
                 // move both bb1 and bb2 to the next words
@@ -400,11 +412,8 @@ public class InvertedIndexManager {
                 pageIDRead2 = bl2.pageIDRead;
 
                 //for list 2, all docID add numDoc1
-//                System.out.println(Arrays.asList(ls2));
                 addDocId(ls2, numDoc1);
-//                System.out.println(Arrays.asList(ls2));
                 ls1.addAll(ls2);
-//                System.out.println(Arrays.asList(ls1));
 
                 //write the word info into buffer
                 WordInfo wi = new WordInfo();
@@ -413,7 +422,6 @@ public class InvertedIndexManager {
                 offset += ls1.size() * 4;
 
                 //write the list info into buffer, if buffer full, append it into disk
-//                System.out.println(Arrays.asList(ls1));
                 writeListBufferByPage(listFileChannel, listBuffer, ls1);
 
                 //check whether bb1 and bb2 can move to the next words
@@ -794,10 +802,6 @@ public class InvertedIndexManager {
      */
 
     public List<Integer> getIndexList(int segID, int pageID, int offset, int length) {
-//        Path path = Paths.get(indexFolder + "/segment" + segID + "b");
-//        PageFileChannel pfc = PageFileChannel.createOrOpen(path);
-//        ByteBuffer indexBuffer = pfc.readPage(pageID);
-//        indexBuffer.rewind();
         ByteBuffer indexBuffer = readIndexListPage(segID, pageID);
         indexBuffer.position(offset);
 
@@ -805,7 +809,6 @@ public class InvertedIndexManager {
         int remainInt = (indexBuffer.limit() - indexBuffer.position()) / 4;
         int lSize = length;
         while (lSize / remainInt >= 1) {
-//            System.out.println(lSize+","+remainInt);
             for (int i = 0; i < remainInt; i++) {
                 ans.add(indexBuffer.getInt());
             }
@@ -817,7 +820,6 @@ public class InvertedIndexManager {
         for (int i = 0; i < lSize; i++) {
             ans.add(indexBuffer.getInt());
         }
-//        pfc.close();
         return ans;
     }
     
@@ -830,8 +832,6 @@ public class InvertedIndexManager {
      */
 
     private List<Integer> andMerge(List<Integer> list1, List<Integer> list2) {
-        // Collections.sort(list1);
-        // Collections.sort(list2);
         // lists are considered to be sorted already
         if (list1.size() == 0 || list2.size() == 0) {
             return null;
@@ -866,8 +866,6 @@ public class InvertedIndexManager {
      */
 
     private List<Integer> orMerge(List<Integer> list1, List<Integer> list2) {
-        // Collections.sort(list1);
-        // Collections.sort(list2);
         // lists are considered to be sorted already
         if (list1.size() == 0 && list2.size() == 0) {
             return null;
