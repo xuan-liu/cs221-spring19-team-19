@@ -3,11 +3,16 @@ package edu.uci.ics.cs221.index.inverted;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
+/**
+ * An in-memory representation of the information of a word in dictionary segment.
+ *
+ */
+
 public class WordInfo {
-    String word;
-    int pageID;
-    int offset;
-    int len;
+    String word; //the keyword
+    int pageID; //the page of the posting list
+    int offset; //the starting position of the posting list in the page
+    int len; // the length of the posting list
 
     public void setWordInfo(String word, int pageID, int offset, int len) {
         this.word = word;
@@ -15,6 +20,12 @@ public class WordInfo {
         this.offset = offset;
         this.len = len;
     }
+
+    /**
+     * write the word info into a ByteBuffer
+     *
+     * @param bb buffer being written
+     */
 
     public void writeOneWord(ByteBuffer bb) {
         bb.putInt(word.length());
@@ -24,6 +35,12 @@ public class WordInfo {
         bb.putInt(offset);
         bb.putInt(len);
     }
+
+    /**
+     * read the word info from a ByteBuffer
+     *
+     * @param bb buffer being read
+     */
 
     public void readOneWord(ByteBuffer bb) {
         int wordLen = bb.getInt();
