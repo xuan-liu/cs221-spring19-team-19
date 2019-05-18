@@ -1,4 +1,3 @@
-
 package edu.uci.ics.cs221.index.inverted;
 
 import com.google.common.base.Preconditions;
@@ -20,9 +19,7 @@ import java.util.*;
 import java.io.File;
 
 import edu.uci.ics.cs221.analysis.*;
-
 import java.nio.charset.StandardCharsets;
-
 import static com.google.common.collect.Maps.immutableEntry;
 
 
@@ -53,14 +50,14 @@ public class InvertedIndexManager {
     public static int DEFAULT_MERGE_THRESHOLD = 8;
     public static int STORE_PARAMETER = 5000;
 
-    private Map<String, List<Integer>> invertedLists;
-    private Map<Integer, Document> documents;
-    private int docID;
-    private int segmentID;
-    private Analyzer analyzer;
-    private String indexFolder;
+    Map<String, List<Integer>> invertedLists;
+    Map<Integer, Document> documents;
+    int docID;
+    int segmentID;
+    Analyzer analyzer;
+    String indexFolder;
 
-    private InvertedIndexManager(String indexFolder, Analyzer analyzer) {
+    InvertedIndexManager(String indexFolder, Analyzer analyzer) {
         this.analyzer = analyzer;
         this.indexFolder = indexFolder;
         this.docID = 0;
@@ -85,6 +82,30 @@ public class InvertedIndexManager {
             } else {
                 Files.createDirectories(indexFolderPath);
                 return new InvertedIndexManager(indexFolder, analyzer);
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    /**
+     * Creates a positional index with the given folder, analyzer, and the compressor.
+     * Compressor must be used to compress the inverted lists and the position lists.
+     *
+     */
+
+    public static InvertedIndexManager createOrOpenPositional(String indexFolder, Analyzer analyzer, Compressor compressor) {
+        try {
+            Path indexFolderPath = Paths.get(indexFolder);
+            if (Files.exists(indexFolderPath) && Files.isDirectory(indexFolderPath)) {
+                if (Files.isDirectory(indexFolderPath)) {
+                    return new PositionalIndexManager(indexFolder, analyzer, compressor);
+                } else {
+                    throw new RuntimeException(indexFolderPath + " already exists and is not a directory");
+                }
+            } else {
+                Files.createDirectories(indexFolderPath);
+                return new PositionalIndexManager(indexFolder, analyzer, compressor);
             }
         } catch (IOException e) {
             throw new UncheckedIOException(e);
@@ -167,7 +188,9 @@ public class InvertedIndexManager {
         ByteBuffer listBuffer = ByteBuffer.allocate(STORE_PARAMETER * invertedLists.size());
         for (String word: invertedLists.keySet()) {
             List<Integer> postingList = invertedLists.get(word);
-            writeListBuffer(listBuffer, postingList);
+            for (int num: postingList) {
+                listBuffer.putInt(num);
+            }
         }
 
         listFileChannel.appendAllBytes(listBuffer);
@@ -191,9 +214,12 @@ public class InvertedIndexManager {
     /**
      * write the first page into the file with an integer, which is the total number of bytes
      * the remaining pages will use
+     *
+     * @param pfc file being written
+     * @param lim the total number of bytes the remaining pages will use
      */
 
-    private void writeFirstPageOfWord(PageFileChannel pfc, int lim) {
+    void writeFirstPageOfWord(PageFileChannel pfc, int lim) {
         ByteBuffer limitBuffer = ByteBuffer.allocate(PageFileChannel.PAGE_SIZE);
         limitBuffer.putInt(lim);
         pfc.appendPage(limitBuffer);
@@ -201,9 +227,12 @@ public class InvertedIndexManager {
 
     /**
      * read the first page on buffer, get the integer, and prepare the buffer for remaining reading
+     *
+     * @param bb ByteBuffer being read
+     * @return cap the total number of bytes the remaining pages will use
      */
 
-    private int readFirstPageOfWord(ByteBuffer bb) {
+    int readFirstPageOfWord(ByteBuffer bb) {
         bb.rewind();
         int cap = bb.getInt();
         bb.limit(PageFileChannel.PAGE_SIZE + cap);
@@ -212,20 +241,12 @@ public class InvertedIndexManager {
     }
 
     /**
-     * Write in a buffer with the information of a list
-     */
-
-    private void writeListBuffer(ByteBuffer bb, List<Integer> l) {
-        for (int num: l) {
-            bb.putInt(num);
-        }
-    }
-
-    /**
      * delete a file
+     *
+     * @param fileName the name of the file being deleted
      */
 
-    private void deleteFile(String fileName) {
+    void deleteFile(String fileName) {
         File file = new File(fileName);
         file.delete();
     }
@@ -247,9 +268,13 @@ public class InvertedIndexManager {
 
     /**
      * Merges the documents of two disk segments, return the number of documents in segment ID1
+     *
+     * @param segID1 the first segment ID
+     * @param segID2 the second segment ID
+     * @return the number of documents in segment ID1
      */
 
-    private int mergeDocuments(int segID1, int segID2) {
+    int mergeDocuments(int segID1, int segID2) {
         DocumentStore ds1 = MapdbDocStore.createOrOpen(indexFolder + "/segment" + segID1 + ".db");
         DocumentStore ds2 = MapdbDocStore.createOrOpen(indexFolder + "/segment" + segID2 + ".db");
         int numDoc1 = (int) ds1.size();
@@ -258,6 +283,7 @@ public class InvertedIndexManager {
         Iterator<Map.Entry<Integer, Document>> itr2 = Iterators.transform(ds2.iterator(),
                 entry -> immutableEntry(entry.getKey() + numDoc1, entry.getValue()));
         Iterator<Map.Entry<Integer, Document>> itr = Iterators.concat(ds1.iterator(), itr2);
+
 
         ds1.close();
         ds2.close();
@@ -272,51 +298,55 @@ public class InvertedIndexManager {
     }
 
     /**
-     * A help class to method getIndexListGivenLen
+     * A help class for method getIndexListGivenLen
      */
 
-    private class BufferAndList{
-        //todo: change later
+    class BufferListMap{
         ByteBuffer bb;
         List<Integer> list;
+        Map<Integer, Integer> map;
         int pageIDRead;
+        int offsetPos;
+        int lenPos;
 
-        public BufferAndList(ByteBuffer bb, List<Integer> list, int pageIDRead){
+        public BufferListMap(ByteBuffer bb, List<Integer> list, Map<Integer, Integer> map, int pageIDRead, int offsetPos, int lenPos){
             this.bb = bb;
             this.list = list;
+            this.map = map;
             this.pageIDRead = pageIDRead;
+            this.offsetPos = offsetPos;
+            this.lenPos = lenPos;
         }
     }
 
     /**
-     * Get a list of a word in given segment, using the length of the list
+     * A help class for method readPositionBufferByPage
      */
 
-    private BufferAndList getIndexListGivenLen(int segID, ByteBuffer bb, int pageIDRead, int len) {
-        List<Integer> list = new LinkedList<>();
-        int remainInt = (bb.limit() - bb.position()) / 4;
-        int lSize = len;
-        while (lSize / remainInt >= 1) {
-            for (int i = 0; i < remainInt; i++) {
-                list.add(bb.getInt());
-            }
-            pageIDRead += 1;
-            bb = readIndexListPage(segID, pageIDRead);
-            lSize -= remainInt;
-            remainInt = PageFileChannel.PAGE_SIZE / 4;
+    class BufferBuffer{
+        ByteBuffer bbRead;
+        ByteBuffer bbWrite;
+        int pageIDReadPos;
+
+        public BufferBuffer(ByteBuffer bbRead, ByteBuffer bbWrite, int pageIDReadPos){
+            this.bbRead = bbRead;
+            this.bbWrite = bbWrite;
+            this.pageIDReadPos = pageIDReadPos;
         }
-        for (int i = 0; i < lSize; i++) {
-            list.add(bb.getInt());
-        }
-        return new BufferAndList(bb, list, pageIDRead);
     }
 
     /**
-     * read a page in a given segment into buffer
+     * read a given page in the segment x into buffer (x = a represent reading dictionary, b represent reading
+     * posting list, c represent reading position list)
+     *
+     * @param segID the segment ID
+     * @param x the part of segment (a represent dictionary, b represent posting list, c represent position list)
+     * @param pageID the page of the file being read
+     * @return the BybeBuffer
      */
 
-    private ByteBuffer readIndexListPage(int segID, int pageID) {
-        Path path = Paths.get(indexFolder + "/segment" + segID + "b");
+    ByteBuffer readSegPage(int segID, String x, int pageID) {
+        Path path = Paths.get(indexFolder + "/segment" + segID + x);
         PageFileChannel pfc = PageFileChannel.createOrOpen(path);
         ByteBuffer indexBuffer = pfc.readPage(pageID);
         indexBuffer.rewind();
@@ -325,24 +355,72 @@ public class InvertedIndexManager {
     }
 
     /**
-     * Add the a number n to all the elements in a list
+     * Get the posting list of a word in a given segment from a buffer, using the length of the list. If
+     * addNum = true, add the number n to all the elements in the list
+     *
+     * @param segID the segment ID
+     * @param bb the BybeBuffer being read with capacity = PAGE_SIZE
+     * @param pageIDRead the page of the list file being read
+     * @param len the length of the posting list
+     * @param addNum whether to add number n to all the elements in the list
+     * @param n the number being added
+     * @return the BybeBuffer being read, the posting list, the page of the list file being read
      */
 
-    private void addDocId(List<Integer> list, int n) {
-        for (int i = 0; i < list.size(); i++) {
-            list.set(i, list.get(i) + n);
+    BufferListMap getIndexListGivenLen(int segID, ByteBuffer bb, int pageIDRead, int len, boolean addNum, int n) {
+        List<Integer> list = new LinkedList<>();
+        int remainInt = (bb.limit() - bb.position()) / 4;
+        int lSize = len;
+
+        // if the posting list is longer than the remaining buffer, first read the buffer,
+        // then open the next page and read
+
+        while (lSize / remainInt >= 1) {
+            for (int i = 0; i < remainInt; i++) {
+                int docID = bb.getInt();
+                if (addNum) {
+                    docID += n;
+                }
+                list.add(docID);
+            }
+            pageIDRead += 1;
+            bb = readSegPage(segID, "b", pageIDRead);
+            lSize -= remainInt;
+            remainInt = PageFileChannel.PAGE_SIZE / 4;
         }
+
+        // if the posting list is no longer than the remaining buffer, just read the buffer
+
+        for (int i = 0; i < lSize; i++) {
+            int docID = bb.getInt();
+            if (addNum) {
+                docID += n;
+            }
+            list.add(docID);
+        }
+        return new BufferListMap(bb, list, new HashMap<>(), pageIDRead, 0, 0);
     }
 
     /**
-     * Write the List of a word into buffer, if the list length is larger than the page size,
+     * Write the posting list of a word into buffer by page, if the list length is larger than the page size,
      * append the page and open another buffer
+     *
+     * @param pfc the file being written
+     * @param bb the BybeBuffer being written with capacity = PAGE_SIZE
+     * @param l the posting list
+     * @param map no use here
+     * @param offsetPos no use here
+     * @return -1
      */
 
-    private void writeListBufferByPage(PageFileChannel pfc, ByteBuffer bb, List<Integer> l) {
+    int writeListBufferByPage(PageFileChannel pfc, ByteBuffer bb, List<Integer> l, Map<Integer, Integer> map, int offsetPos) {
         int lSize = l.size();
         int remainInt = (bb.limit() - bb.position()) / 4;
         int lPos = 0;
+
+        // if the posting list is longer than the remaining buffer, first write the buffer,
+        // then append the page and open another buffer to write
+
         while (lSize / remainInt >= 1) {
             for (int i = 0; i < remainInt; i++, lPos++) {
                 bb.putInt(l.get(lPos));
@@ -352,16 +430,23 @@ public class InvertedIndexManager {
             lSize -= remainInt;
             remainInt = PageFileChannel.PAGE_SIZE / 4;
         }
+
+        // if the posting list is no longer than the remaining buffer, just write the buffer
         for (int i = 0; i < lSize; i++, lPos++) {
             bb.putInt(l.get(lPos));
         }
+        return -1;
     }
 
     /**
      * Merges the invertedLists of two disk segments
+     *
+     * @param segID1 the first segment ID
+     * @param segID2 the second segment ID
+     * @param numDoc1 the number of documents in the first segment
      */
 
-    private void mergeInvertedLists(int segID1, int segID2, int numDoc1) {
+    void mergeInvertedLists(int segID1, int segID2, int numDoc1) {
         // read two segmentXXa into two buffer and delete these two segmentXXa
         Path path = Paths.get(indexFolder + "/segment" + segID1 + "a");
         PageFileChannel pfc = PageFileChannel.createOrOpen(path);
@@ -390,10 +475,10 @@ public class InvertedIndexManager {
         int pageID = 0;
         int pageIDRead1 = 0;
         int pageIDRead2 = 0;
-        ByteBuffer lb1 = readIndexListPage(segID1, pageIDRead1);
-        ByteBuffer lb2 = readIndexListPage(segID2, pageIDRead2);
+        ByteBuffer lb1 = readSegPage(segID1, "b", pageIDRead1);
+        ByteBuffer lb2 = readSegPage(segID2, "b", pageIDRead2);
 
-        path = Paths.get(indexFolder + "/segment b tmp"); //todo:change later
+        path = Paths.get(indexFolder + "/segment b tmp");
         PageFileChannel listFileChannel = PageFileChannel.createOrOpen(path);
 
         while (true) {
@@ -401,18 +486,16 @@ public class InvertedIndexManager {
                 // add them to the dictionary, find their lists and add them to the disk
                 // move both bb1 and bb2 to the next words
 
-                //get the list according to the word
-                BufferAndList bl1 = getIndexListGivenLen(segID1, lb1, pageIDRead1, wi1.len);
+                //get the list according to the word, for list 2, all docID add numDoc1
+                BufferListMap bl1 = getIndexListGivenLen(segID1, lb1, pageIDRead1, wi1.len, false, numDoc1);
                 lb1 = bl1.bb;
                 List<Integer> ls1 = bl1.list;
                 pageIDRead1 = bl1.pageIDRead;
-                BufferAndList bl2 = getIndexListGivenLen(segID2, lb2, pageIDRead2, wi2.len);
+                BufferListMap bl2 = getIndexListGivenLen(segID2, lb2, pageIDRead2, wi2.len, true, numDoc1);
                 lb2 = bl2.bb;
                 List<Integer> ls2 = bl2.list;
                 pageIDRead2 = bl2.pageIDRead;
 
-                //for list 2, all docID add numDoc1
-                addDocId(ls2, numDoc1);
                 ls1.addAll(ls2);
 
                 //write the word info into buffer
@@ -422,7 +505,7 @@ public class InvertedIndexManager {
                 offset += ls1.size() * 4;
 
                 //write the list info into buffer, if buffer full, append it into disk
-                writeListBufferByPage(listFileChannel, listBuffer, ls1);
+                writeListBufferByPage(listFileChannel, listBuffer, ls1, new HashMap<>(), 0);
 
                 //check whether bb1 and bb2 can move to the next words
                 if (!wb1.hasRemaining() || !wb2.hasRemaining()) {
@@ -437,19 +520,17 @@ public class InvertedIndexManager {
             }
             else if (wi1.word.compareTo(wi2.word) > 0) {
                 // add key2 and its list to the disk, move bb2 to the next word
-                BufferAndList bl2 = getIndexListGivenLen(segID2, lb2, pageIDRead2, wi2.len);
+                BufferListMap bl2 = getIndexListGivenLen(segID2, lb2, pageIDRead2, wi2.len, true, numDoc1);
                 lb2 = bl2.bb;
                 List<Integer> ls2 = bl2.list;
                 pageIDRead2 = bl2.pageIDRead;
-
-                addDocId(ls2, numDoc1);
 
                 WordInfo wi = new WordInfo();
                 wi.setWordInfo(wi2.word, pageID, offset, ls2.size());
                 wi.writeOneWord(wordsBuffer);
                 offset += ls2.size() * 4;
 
-                writeListBufferByPage(listFileChannel, listBuffer, ls2);
+                writeListBufferByPage(listFileChannel, listBuffer, ls2, new HashMap<>(), 0);
 
                 if (!wb2.hasRemaining()) {
                     if (offset >= PageFileChannel.PAGE_SIZE) {
@@ -457,7 +538,7 @@ public class InvertedIndexManager {
                         offset -= PageFileChannel.PAGE_SIZE;
                     }
 
-                    BufferAndList bl1 = getIndexListGivenLen(segID1, lb1, pageIDRead1, wi1.len);
+                    BufferListMap bl1 = getIndexListGivenLen(segID1, lb1, pageIDRead1, wi1.len, false, numDoc1);
                     lb1 = bl1.bb;
                     List<Integer> ls1 = bl1.list;
                     pageIDRead1 = bl1.pageIDRead;
@@ -467,7 +548,7 @@ public class InvertedIndexManager {
                     wi.writeOneWord(wordsBuffer);
                     offset += ls1.size() * 4;
 
-                    writeListBufferByPage(listFileChannel, listBuffer, ls1);
+                    writeListBufferByPage(listFileChannel, listBuffer, ls1, new HashMap<>(), 0);
                     break;
                 }
                 wi2 = new WordInfo();
@@ -475,7 +556,7 @@ public class InvertedIndexManager {
             }
             else {
                 // add key1 and its list to the disk, move bb1 to the next word
-                BufferAndList bl1 = getIndexListGivenLen(segID1, lb1, pageIDRead1, wi1.len);
+                BufferListMap bl1 = getIndexListGivenLen(segID1, lb1, pageIDRead1, wi1.len, false, numDoc1);
                 lb1 = bl1.bb;
                 List<Integer> ls1 = bl1.list;
                 pageIDRead1 = bl1.pageIDRead;
@@ -485,7 +566,7 @@ public class InvertedIndexManager {
                 wi.writeOneWord(wordsBuffer);
                 offset += ls1.size() * 4;
 
-                writeListBufferByPage(listFileChannel, listBuffer, ls1);
+                writeListBufferByPage(listFileChannel, listBuffer, ls1, new HashMap<>(), 0);
 
                 if (!wb1.hasRemaining()) {
                     if (offset >= PageFileChannel.PAGE_SIZE) {
@@ -493,19 +574,17 @@ public class InvertedIndexManager {
                         offset -= PageFileChannel.PAGE_SIZE;
                     }
 
-                    BufferAndList bl2 = getIndexListGivenLen(segID2, lb2, pageIDRead2, wi2.len);
+                    BufferListMap bl2 = getIndexListGivenLen(segID2, lb2, pageIDRead2, wi2.len, true, numDoc1);
                     lb2 = bl2.bb;
                     List<Integer> ls2 = bl2.list;
                     pageIDRead2 = bl2.pageIDRead;
-
-                    addDocId(ls2, numDoc1);
 
                     wi = new WordInfo();
                     wi.setWordInfo(wi2.word, pageID, offset, ls2.size());
                     wi.writeOneWord(wordsBuffer);
                     offset += ls2.size() * 4;
 
-                    writeListBufferByPage(listFileChannel, listBuffer, ls2);
+                    writeListBufferByPage(listFileChannel, listBuffer, ls2, new HashMap<>(), 0);
 
                     break;
                 }
@@ -529,18 +608,17 @@ public class InvertedIndexManager {
                 wi2 = new WordInfo();
                 wi2.readOneWord(wb2);
 
-                BufferAndList bl2 = getIndexListGivenLen(segID2, lb2, pageIDRead2, wi2.len);
+                BufferListMap bl2 = getIndexListGivenLen(segID2, lb2, pageIDRead2, wi2.len, true, numDoc1);
                 lb2 = bl2.bb;
                 List<Integer> ls2 = bl2.list;
                 pageIDRead2 = bl2.pageIDRead;
 
-                addDocId(ls2, numDoc1);
                 WordInfo wi = new WordInfo();
                 wi.setWordInfo(wi2.word, pageID, offset, ls2.size());
                 wi.writeOneWord(wordsBuffer);
                 offset += ls2.size() * 4;
 
-                writeListBufferByPage(listFileChannel, listBuffer, ls2);
+                writeListBufferByPage(listFileChannel, listBuffer, ls2, new HashMap<>(), 0);
             }
         }
 
@@ -554,7 +632,7 @@ public class InvertedIndexManager {
                 wi1 = new WordInfo();
                 wi1.readOneWord(wb1);
 
-                BufferAndList bl1 = getIndexListGivenLen(segID1, lb1, pageIDRead1, wi1.len);
+                BufferListMap bl1 = getIndexListGivenLen(segID1, lb1, pageIDRead1, wi1.len, false, numDoc1);
                 lb1 = bl1.bb;
                 List<Integer> ls1 = bl1.list;
                 pageIDRead1 = bl1.pageIDRead;
@@ -564,10 +642,11 @@ public class InvertedIndexManager {
                 wi.writeOneWord(wordsBuffer);
                 offset += ls1.size() * 4;
 
-                writeListBufferByPage(listFileChannel, listBuffer, ls1);
+                writeListBufferByPage(listFileChannel, listBuffer, ls1, new HashMap<>(), 0);
             }
         }
 
+        // set list file
         listFileChannel.appendAllBytes(listBuffer);
         listFileChannel.close();
         deleteFile(indexFolder + "/segment" + segID1 + "b");
@@ -577,6 +656,7 @@ public class InvertedIndexManager {
         File f2 = new File(indexFolder + "/segment" + segID1/2 + "b");
         f1.renameTo(f2);
 
+        // set word file
         path = Paths.get(indexFolder + "/segment" + segID1/2 + "a");
         PageFileChannel wordsFileChannel = PageFileChannel.createOrOpen(path);
 
@@ -802,7 +882,7 @@ public class InvertedIndexManager {
      */
 
     public List<Integer> getIndexList(int segID, int pageID, int offset, int length) {
-        ByteBuffer indexBuffer = readIndexListPage(segID, pageID);
+        ByteBuffer indexBuffer = readSegPage(segID, "b", pageID);
         indexBuffer.position(offset);
 
         List<Integer> ans = new ArrayList<>();
@@ -813,7 +893,7 @@ public class InvertedIndexManager {
                 ans.add(indexBuffer.getInt());
             }
             pageID += 1;
-            indexBuffer = readIndexListPage(segID, pageID);
+            indexBuffer = readSegPage(segID, "b", pageID);
             lSize -= remainInt;
             remainInt = PageFileChannel.PAGE_SIZE / 4;
         }
@@ -1006,7 +1086,7 @@ public class InvertedIndexManager {
      * @param segmentNum n-th segment in the inverted index (start from 0).
      * @return in-memory data structure with all contents in the index segment, null if segmentNum don't exist.
      */
-    
+
     public InvertedIndexSegmentForTest getIndexSegment(int segmentNum) {
         if (segmentID == 0) {
             return null;
@@ -1020,31 +1100,21 @@ public class InvertedIndexManager {
         PageFileChannel wordsFileChannel = PageFileChannel.createOrOpen(wordsPath);
 
         ByteBuffer wordsBuffer = wordsFileChannel.readAllPages();
-        wordsBuffer.rewind();
-
-        // get the integer in first page.
-        int lim = wordsBuffer.getInt();
-        wordsBuffer.position(PageFileChannel.PAGE_SIZE);
-        wordsBuffer.limit(PageFileChannel.PAGE_SIZE+lim);
+        wordsFileChannel.close();
+        int lim = readFirstPageOfWord(wordsBuffer);
 
         // based on remaining page, build map<String, Integer> in which key is keyword, value is len(list)
+        WordInfo wi = new WordInfo();
         while (wordsBuffer.hasRemaining()) {
-            int wordLen = wordsBuffer.getInt();
-            byte[] wordb = new byte[wordLen];
-            wordsBuffer.get(wordb, 0, wordLen);
-            int listPage = wordsBuffer.getInt();
-            int listOff = wordsBuffer.getInt();
-            int listLen = wordsBuffer.getInt();
-            String words = new String(wordb,StandardCharsets.UTF_8);
-            wordDic.put(words, listLen);
+            wi.readOneWord(wordsBuffer);
+            wordDic.put(wi.word, wi.len);
         }
-
-        wordsFileChannel.close();
 
         // read segmentXXb, build map<String, List<Integer>> invertedLists
         Path listPath = Paths.get(indexFolder + "/segment" + segmentNum + "b");
         PageFileChannel listFileChannel = PageFileChannel.createOrOpen(listPath);
         ByteBuffer listBuffer = listFileChannel.readAllPages();
+        listFileChannel.close();
 
         listBuffer.rewind();
         for (String word: wordDic.keySet()) {
@@ -1056,8 +1126,6 @@ public class InvertedIndexManager {
             invertedLists.put(word, list);
         }
 
-        listFileChannel.close();
-
         // read segmentXX.db, build map<Integer, Document> documents
         DocumentStore ds = MapdbDocStore.createOrOpen(indexFolder + "/segment" + segmentNum + ".db");
         Iterator<Map.Entry<Integer, Document>> itr = ds.iterator();
@@ -1067,15 +1135,6 @@ public class InvertedIndexManager {
         }
         ds.close();
         return new InvertedIndexSegmentForTest(invertedLists, documents);
-    }
-
-    /**
-     * Creates a positional index with the given folder, analyzer, and the compressor.
-     * Compressor must be used to compress the inverted lists and the position lists.
-     *
-     */
-    public static InvertedIndexManager createOrOpenPositional(String indexFolder, Analyzer analyzer, Compressor compressor) {
-        throw new UnsupportedOperationException();
     }
 
     /**
@@ -1097,13 +1156,39 @@ public class InvertedIndexManager {
     /**
      * Reads a disk segment of a positional index into memory based on segmentNum.
      * This function is mainly used for checking correctness in test cases.
-     *
      * Throws UnsupportedOperationException if the inverted index is not a positional index.
+     * (method for PositionalIndexManager)
      *
      * @param segmentNum n-th segment in the inverted index (start from 0).
      * @return in-memory data structure with all contents in the index segment, null if segmentNum don't exist.
      */
     public PositionalIndexSegmentForTest getIndexSegmentPositional(int segmentNum) {
-        throw new UnsupportedOperationException();
+        throw new UnsupportedOperationException("This is method for PositionalIndexManager, InvertedIndexManager does not support!");
+    }
+
+    /**
+     * Get a ByteBuffer containing the whole position list of a word be page in a given segment from a buffer,
+     * using the total length of position lists. (method for PositionalIndexManager)
+     *
+     * @param segID the segment ID
+     * @param bbr the BybeBuffer being read with capacity = PAGE_SIZE
+     * @param pageIDReadPos the page of the posting list file being read
+     * @param totalLenPos the total length of position lists
+     * @return the BybeBuffer being read, the BybeBuffer being written, the page of the posting list file being read
+     */
+    BufferBuffer readPositionBufferByPage(int segID, ByteBuffer bbr, int pageIDReadPos, int totalLenPos) {
+        throw new UnsupportedOperationException("This is method for PositionalIndexManager, InvertedIndexManager does not support!");
+    }
+
+    /**
+     * write a ByteBuffer containing position list into buffer by page, if the list length is larger than the page size,
+     * append the page and open another buffer. (method for PositionalIndexManager)
+     *
+     * @param pfc the file being written
+     * @param bbw the BybeBuffer being written with capacity = PAGE_SIZE
+     * @param bbr the BybeBuffer being read
+     */
+    void writePositionBufferByPage(PageFileChannel pfc, ByteBuffer bbw, ByteBuffer bbr) {
+        throw new UnsupportedOperationException("This is method for PositionalIndexManager, InvertedIndexManager does not support!");
     }
 }
