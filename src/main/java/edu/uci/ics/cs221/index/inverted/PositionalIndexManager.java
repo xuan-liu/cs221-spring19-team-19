@@ -712,41 +712,94 @@ public class PositionalIndexManager extends InvertedIndexManager {
 
     private Map<Integer, List<Integer>> findWord(PageFileChannel pfc, String target, int segID) {
         Map<Integer, List<Integer>> wordList = new HashMap<>();
-        int lim = pfc.getNumPages();
+        int cap = pfc.getNumPages();
         int pageNumber = 1;
-        if (pageNumber >= lim) {
+        if (pageNumber >= cap) {
             return wordList;
         }
-        try {
-            ByteBuffer bb = pfc.readPage(pageNumber);
-            bb.limit(PageFileChannel.PAGE_SIZE);
-            bb.position(0);
-            int wordLength = bb.getInt();
+        ByteBuffer bb = pfc.readPage(pageNumber);
+        bb.limit(PageFileChannel.PAGE_SIZE);
+        bb.position(0);
+        while (true) {
+            int wordLength;
+            byte[] word;
+            int pageID;
+            int offset;
+            int length;
+            try {
+                wordLength = bb.getInt();
+            }
+            catch (BufferUnderflowException e) {
+                pageNumber++;
+                if (pageNumber >= cap) {
+                    break;
+                }
+                bb = pfc.readPage(pageNumber);
+                bb.position(0);
+                wordLength = bb.getInt();
+            }
             if (wordLength == 0) {
                 return wordList;
             }
-            byte[] word = new byte[wordLength];
+            word = new byte[wordLength];
             for (int i = 0; i < wordLength; i++) {
-                word[i] = bb.get();
+                try {
+                    word[i] = bb.get();
+                }
+                catch (BufferUnderflowException e) {
+                    pageNumber++;
+                    if (pageNumber >= cap) {
+                        break;
+                    }
+                    bb = pfc.readPage(pageNumber);
+                    bb.position(0);
+                    word[i] = bb.get();
+                }
             }
             String dictWord = new String(word);
-            int pageID = bb.getInt();
-            int offset = bb.getInt();
-            int length = bb.getInt();
+            try {
+                pageID = bb.getInt();
+            }
+            catch (BufferUnderflowException e) {
+                pageNumber++;
+                if (pageNumber >= cap) {
+                    break;
+                }
+                bb = pfc.readPage(pageNumber);
+                bb.position(0);
+                pageID = bb.getInt();
+            }
+            try {
+                offset = bb.getInt();
+            }
+            catch (BufferUnderflowException e) {
+                pageNumber++;
+                if (pageNumber >= cap) {
+                    break;
+                }
+                bb = pfc.readPage(pageNumber);
+                bb.position(0);
+                offset = bb.getInt();
+            }
+            try {
+                length = bb.getInt();
+            }
+            catch (BufferUnderflowException e) {
+                pageNumber++;
+                if (pageNumber >= cap) {
+                    break;
+                }
+                bb = pfc.readPage(pageNumber);
+                bb.position(0);
+                length = bb.getInt();
+            }
             if (dictWord.equals(target)) {
                 wordList = getPositionalIndexList(segID, pageID, offset, length);
                 return wordList;
             }
         }
-        catch (BufferUnderflowException e) {
-            pageNumber++;
-            if (pageNumber >= lim) {
-                return wordList;
-            }
-        }
         return wordList;
     }
-
     /**
      * Get all the documents matching the ID list in a segment.
      *
