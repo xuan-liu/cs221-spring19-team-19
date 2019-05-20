@@ -8,20 +8,26 @@ import java.util.List;
  */
 
 public class DeltaVarLenCompressor implements Compressor {
-
-    /**
-    * Encoding each integer in the list.
-    * @param integers the list of input integers.
-    * @return the encoded byte array
-    */
     
+    /**
+     * Encodes a list of integers to a byte array.
+     */
+
     @Override
     public byte[] encode(List<Integer> integers) {
         List<Byte> vec = new ArrayList<>();
+        int offset = 0;
         for (int num : integers) {
+            
+            // calculating the offset of the number from the previous one
+            num -= offset;
+            
+            // a flag to check if the number needs more than one byte
             boolean flag = false;
             List<Byte> temp = new ArrayList<>();
             int count = 1;
+            
+            // binary representation of num
             while (num > 0) {
                 if (count % 8 == 0) {
                     if (flag) {
@@ -39,6 +45,8 @@ public class DeltaVarLenCompressor implements Compressor {
                 num /= 2;
                 count++;
             }
+            
+            // filling the left bytes
             int left = temp.size() % 8;
             if (left != 0) {
                 for (int j = 0; j < 8 - left; j++) {
@@ -50,8 +58,13 @@ public class DeltaVarLenCompressor implements Compressor {
                     }
                 }
             }
+            
+            // adding the results
             Collections.reverse(temp);
             vec.addAll(temp);
+            
+            // updating the offset
+            offset += num;
         }
         byte[] coded = new byte[vec.size()];
         for (int i = 0; i < vec.size(); i++) {
