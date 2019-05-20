@@ -654,8 +654,275 @@ public class PositionalIndexManager extends InvertedIndexManager {
     @Override
     public Iterator<Document> searchPhraseQuery(List<String> phrase) {
         Preconditions.checkNotNull(phrase);
+        List<Document> docs = new ArrayList<>();
+        int totalSegments = getNumSegments();
 
-        throw new UnsupportedOperationException();
+        // the previous state of the phrase lists
+        Map<Integer, List<Integer>> prev = new HashMap<>();
+
+        // searching each segment
+        for (int seg = 0; seg < totalSegments; seg++) {
+            Path dictSeg = Paths.get(indexFolder + "/segment" + seg + "a");
+            PageFileChannel pfc = PageFileChannel.createOrOpen(dictSeg);
+
+            // the position of the keyword in the phrase
+            int pos = 0;
+
+            // searching for each individual keyword
+            for (String keyword : phrase) {
+                List<String> word = analyzer.analyze(keyword);
+                if (word.size() == 0 || word.get(0).length() == 0) {
+                    continue;
+                }
+                keyword = word.get(0);
+                Map<Integer, List<Integer>> curr = findWord(pfc, keyword, seg);
+                List<Integer> tempList = new ArrayList<>(curr.keySet());
+                if (tempList.isEmpty()) {
+                    break;
+                }
+                if (pos == 0) {
+                    prev = mapMerge(curr, curr, 0);
+                }
+                else {
+                    prev = mapMerge(prev, curr, pos);
+                }
+                pos++;
+            }
+            if (prev.isEmpty()) {
+                continue;
+            }
+            List<Integer> idList = new ArrayList<>(prev.keySet());
+            List<Document> docList = getDocuments(seg, idList);
+            if (docList.isEmpty()) {
+                continue;
+            }
+            docs.addAll(docList);
+        }
+        return docs.iterator();
+    }
+
+    /**
+     * Finds the word in the loaded PageChannelFile of the dictionary.
+     *
+     * @param pfc loaded segment from the disk
+     * @param target the keyword to look for
+     * @param segID the segment number to look for the target in
+     * @return a list of integers containing the ID of documents matching the search
+     */
+
+    private Map<Integer, List<Integer>> findWord(PageFileChannel pfc, String target, int segID) {
+        Map<Integer, List<Integer>> wordList = new HashMap<>();
+        int lim = pfc.getNumPages();
+        int pageNumber = 1;
+        if (pageNumber >= lim) {
+            return wordList;
+        }
+        try {
+            ByteBuffer bb = pfc.readPage(pageNumber);
+            bb.limit(PageFileChannel.PAGE_SIZE);
+            bb.position(0);
+            int wordLength = bb.getInt();
+            if (wordLength == 0) {
+                return wordList;
+            }
+            byte[] word = new byte[wordLength];
+            for (int i = 0; i < wordLength; i++) {
+                word[i] = bb.get();
+            }
+            String dictWord = new String(word);
+            int pageID = bb.getInt();
+            int offset = bb.getInt();
+            int length = bb.getInt();
+            if (dictWord.equals(target)) {
+                wordList = getPositionalIndexList(segID, pageID, offset, length);
+                return wordList;
+            }
+        }
+        catch (BufferUnderflowException e) {
+            pageNumber++;
+            if (pageNumber >= lim) {
+                return wordList;
+            }
+        }
+        return wordList;
+    }
+
+    /**
+     * Get all the documents matching the ID list in a segment.
+     *
+     * @param segID the number of segment
+     * @param idList a list of document IDs
+     * @return a list of documents matching the search
+     */
+
+    private List<Document> getDocuments(int segID, List<Integer> idList) {
+        List<Document> ans = new ArrayList<>();
+        String path = indexFolder + "/segment" + segID + ".db";
+        DocumentStore ds = MapdbDocStore.createOrOpen(path);
+        Iterator<Integer> docsIterator = ds.keyIterator();
+        while (docsIterator.hasNext()) {
+            int tempID = docsIterator.next();
+            if (!idList.isEmpty() && idList.contains(tempID)) {
+                ans.add(ds.getDocument(tempID));
+            }
+        }
+        ds.close();
+        return ans;
+    }
+
+    /**
+     * Get the inverted list in a certain page of a segment with given offset and length.
+     *
+     * @param segID the ID of segment
+     * @param pageID the ID of page
+     * @param offset an offset of the inverted list
+     * @param length the length of the inverted list
+     * @return a list of document IDs matching the search
+     */
+
+    private Map<Integer, List<Integer>> getPositionalIndexList(int segID, int pageID, int offset, int length) {
+        Path path = Paths.get(indexFolder + "/segment" + segID + "b");
+        PageFileChannel pfc = PageFileChannel.createOrOpen(path);
+        ByteBuffer indexBuffer = pfc.readPage(pageID);
+        indexBuffer.position(offset);
+        Map<Integer, List<Integer>> posList = new HashMap<>();
+        for (int i = 0; i < length; i++) {
+            int docID = -1;
+            int positionalOffset = -1;
+            int positionalLength;
+            int mode = 0; // to detect where the exception happens
+            try {
+                docID = indexBuffer.getInt();
+                mode++;
+                positionalOffset = indexBuffer.getInt();
+                mode++;
+                positionalLength = indexBuffer.getInt();
+            }
+            catch (BufferUnderflowException e) {
+                pageID++;
+                indexBuffer = pfc.readPage(pageID);
+                indexBuffer.position(0);
+                if (mode == 0) { // mode 0: exception occurred while reading docID
+                    docID = indexBuffer.getInt();
+                    positionalOffset = indexBuffer.getInt();
+                    positionalLength = indexBuffer.getInt();
+                }
+                else if (mode == 1) { // mode 1: exception occurred while reading positional offset
+                    positionalOffset = indexBuffer.getInt();
+                    positionalLength = indexBuffer.getInt();
+                }
+                else { // mode 2: exception occurred while reading positional list length
+                    positionalLength = indexBuffer.getInt();
+                }
+            }
+            if (docID == -1 || positionalOffset == -1 || positionalLength == -1) {
+                System.err.println("something went wrong in order to get the positional lists");
+                System.exit(-1);
+            }
+            List<Integer> positions = getPositionalList(segID, positionalOffset, positionalLength);
+            posList.put(docID, positions);
+        }
+        pfc.close();
+        return posList;
+    }
+
+    /**
+     * Get the inverted list in a certain page of a segment with given offset and length.
+     *
+     * @param segID the segment ID
+     * @param offset an offset of the positional list
+     * @param length the length of the positional list
+     * @return a list of integers declaring the positional indices
+     */
+
+    private List<Integer> getPositionalList(int segID, int offset, int length) {
+        List<Integer> list = new ArrayList<>();
+        Path path = Paths.get(indexFolder + "/segment" + segID + "c");
+        PageFileChannel pfc = PageFileChannel.createOrOpen(path);
+        int pageID = offset / PageFileChannel.PAGE_SIZE;
+        ByteBuffer posBuffer = pfc.readPage(pageID);
+        int pos = offset - pageID * PageFileChannel.PAGE_SIZE;
+        posBuffer.position(pos);
+        for (int i = 0; i < length; i++) {
+            try {
+                int id = posBuffer.getInt();
+                list.add(id);
+            }
+            catch (BufferUnderflowException e) {
+                pageID++;
+                posBuffer = pfc.readPage(pageID);
+                posBuffer.position(0);
+                int id = posBuffer.getInt();
+                list.add(id);
+            }
+        }
+        pfc.close();
+        return list;
+    }
+
+    /**
+     * Finding the overlap of two listings as a map
+     *
+     * @param prev the previous state of the listings
+     * @param curr the current state of the listings
+     * @param offset the offset that needs to be checked
+     * @return the special overlap of the two listings based on the position lists
+     */
+
+    private Map<Integer, List<Integer>> mapMerge(Map<Integer, List<Integer>> prev, Map<Integer, List<Integer>> curr, int offset) {
+        Map<Integer, List<Integer>> merged = new HashMap<>();
+        if (offset == 0) {
+            return curr;
+        }
+        if (curr.isEmpty() || prev.isEmpty() || offset < 0) {
+            throw new RuntimeException("two empty maps"); // TODO: change later
+        }
+        List<Integer> prevList = new ArrayList<>(prev.keySet());
+        for (int id : prevList) {
+            if (!curr.containsKey(id)) {
+                continue;
+            }
+            List<Integer> list = postingMerge(prev.get(id), curr.get(id), offset);
+            if (list.isEmpty()) {
+                continue;
+            }
+            merged.put(id, list);
+        }
+        return merged;
+    }
+
+    /**
+     * Performs merge for two lists
+     *
+     * @param list1 the old list of results
+     * @param list2 the new list of results
+     * @param offset the comparator to combine to lists
+     * @return the overlap of two lists
+     */
+
+    private List<Integer> postingMerge(List<Integer> list1, List<Integer> list2, int offset) {
+        List<Integer> merged = new ArrayList<>();
+        if (list1.size() == 0 || list2.size() == 0) {
+            return merged;
+        }
+        int p1 = 0;
+        int p2 = 0;
+        while (p1 < list1.size() && p2 < list2.size()) {
+            int num = list2.get(p2) - list1.get(p1);
+            if (num == offset) {
+                int first = list1.get(p1);
+                merged.add(first);
+                p1++;
+                p2++;
+            }
+            else if (num < offset) {
+                p2++;
+            }
+            else {
+                p1++;
+            }
+        }
+        return merged;
     }
 
     /**
