@@ -675,42 +675,42 @@ public class InvertedIndexManager {
      * @return a iterator of documents matching the query
      */
     
+    /**
+     * Performs a single keyword search on the inverted index.
+     * You could assume the analyzer won't convert the keyword into multiple tokens.
+     * If the keyword is empty, it should not return anything.
+     *
+     * @param keyword keyword, cannot be null.
+     * @return a iterator of documents matching the query
+     */
+
     public Iterator<Document> searchQuery(String keyword) {
-        // check if the keyword is not null
         Preconditions.checkNotNull(keyword);
         List<String> word = analyzer.analyze(keyword);
         List<Document> docs = new ArrayList<>();
-        // check if the processed keyword is not null
+
+        // check if the processed keyword is null
         if (word.size() == 0 || word.get(0).length() == 0) {
             return docs.iterator();
         }
         keyword = word.get(0);
-        // documents that match the search
-        
         int totalSegments = getNumSegments();
+
         // searching each individual segment
         for (int seg = 0; seg < totalSegments; seg++) {
             Path dictSeg = Paths.get(indexFolder + "/segment" + seg + "a");
             PageFileChannel pfc = PageFileChannel.createOrOpen(dictSeg);
+
             // loading the dictionary
-            ByteBuffer bb = pfc.readAllPages();
-            bb.rewind();
-            // consume the total number of bytes in the segment
-            int cap = bb.getInt();
-            // set the limit to the one page (for the cap) and the total bytes in the segment
-            bb.limit(PageFileChannel.PAGE_SIZE + cap);
-            // find if the keyword exists in the dictionary
-            bb.position(PageFileChannel.PAGE_SIZE);
-            List<Integer> info = findKeyword(bb, keyword, seg);
-            if (info == null) {
-                // move on if dictionary does not contain the keyword
+            List<Integer> info = findKeyword(pfc, keyword, seg);
+            pfc.close();
+            if (info.isEmpty()) {
                 continue;
             }
+
             // all the documents in the segment match the keyword
             List<Document> segmentDocs = getDocuments(seg, info);
-            for (Document temp : segmentDocs) {
-                docs.add(temp);
-            }
+            docs.addAll(segmentDocs);
         }
         return docs.iterator();
     }
@@ -725,46 +725,51 @@ public class InvertedIndexManager {
     public Iterator<Document> searchAndQuery(List<String> keywords) {
         Preconditions.checkNotNull(keywords);
         int totalSegments = getNumSegments();
-        // documents match the and search
         List<Document> andDocs = new ArrayList<>();
-        // for the first merge, we just copy the result
+
+        // for the first merge, just copy the result
         boolean flag = true;
+
         // search segments
         for (int seg = 0; seg < totalSegments; seg++) {
             Path dictSeg = Paths.get(indexFolder + "/segment" + seg + "a");
             PageFileChannel pfc = PageFileChannel.createOrOpen(dictSeg);
-            ByteBuffer bb = pfc.readAllPages();
-            bb.rewind();
-            int cap = bb.getInt();
-            bb.limit(PageFileChannel.PAGE_SIZE + cap);
+
             // result of the and search
             List<Integer> andSearch = new ArrayList<>();
             for (String keyword : keywords) {
                 List<String> word = analyzer.analyze(keyword);
                 if (word.size() == 0 || word.get(0).length() == 0) {
-                    return andDocs.iterator();
+                    continue;
                 }
                 keyword = word.get(0);
-                bb.position(PageFileChannel.PAGE_SIZE);
-                List<Integer> info = findKeyword(bb, keyword, seg);
-                bb.position(PageFileChannel.PAGE_SIZE);
-                if (info == null) {
+                List<Integer> info = findKeyword(pfc, keyword, seg);
+                if (info.isEmpty()) {
+                    andSearch.clear();
                     break;
                 }
                 if (flag) {
+
                     // copy the result for the first search
                     andSearch = andMerge(info, info);
                     flag = false;
                 }
                 else {
+
                     // merge the results
                     andSearch = andMerge(andSearch, info);
                 }
+                if (andSearch.isEmpty()) {
+                    break;
+                }
+            }
+            pfc.close();
+            if (andSearch.size() == 0) {
+                continue;
             }
             List<Document> segmentDocs = getDocuments(seg, andSearch);
-            for (Document temp : segmentDocs) {
-                andDocs.add(temp);
-            }
+            andDocs.addAll(segmentDocs);
+            flag = false;
         }
         return andDocs.iterator();
     }
@@ -775,77 +780,100 @@ public class InvertedIndexManager {
      * @param keywords a list of keywords in the OR query
      * @return a iterator of documents matching the query
      */
-    
+
     public Iterator<Document> searchOrQuery(List<String> keywords) {
         Preconditions.checkNotNull(keywords);
-        int totalSegments = getNumSegments();
-        // documents match the or search
         List<Document> orDocs = new ArrayList<>();
+        int totalSegments = getNumSegments();
+
         // search each segment
         for (int seg = 0; seg < totalSegments; seg++) {
             Path dictSeg = Paths.get(indexFolder + "/segment" + seg + "a");
             PageFileChannel pfc = PageFileChannel.createOrOpen(dictSeg);
-            // load the dictionary
-            ByteBuffer bb = pfc.readAllPages();
-            bb.rewind();
-            int cap = bb.getInt();
-            bb.limit(PageFileChannel.PAGE_SIZE + cap);
+
             // result of or search
             List<Integer> orSearch = new ArrayList<>();
+
             // search fo each keyword
             for (String keyword : keywords) {
                 List<String> word = analyzer.analyze(keyword);
+
                 // check if keyword is empty
                 if (word.size() == 0 || word.get(0).length() == 0) {
                     continue;
                 }
                 keyword = word.get(0);
-                // set the position to the beginning of the dictionary
-                bb.position(PageFileChannel.PAGE_SIZE);
-                List<Integer> info = findKeyword(bb, keyword, seg);
-                // set the position back
-                bb.position(PageFileChannel.PAGE_SIZE);
-                if (info == null) {
+                List<Integer> info = findKeyword(pfc, keyword, seg);
+                if (info.isEmpty()) {
                     continue;
                 }
+
                 // merge the results
                 orSearch = orMerge(orSearch, info);
             }
-            List<Document> segmentDocs = getDocuments(seg, orSearch);
-            for (Document temp : segmentDocs) {
-                orDocs.add(temp);
+            pfc.close();
+            if (orSearch.size() == 0) {
+                continue;
             }
+            List<Document> segmentDocs = getDocuments(seg, orSearch);
+            orDocs.addAll(segmentDocs);
         }
         return orDocs.iterator();
     }
-    
+
     /**
-     * Finds the keyword in the loaded bytes of the dictionary.
+     * Performs a phrase search on a positional index.
+     * Phrase search means the document must contain the consecutive sequence of keywords in exact order.
      *
-     * @param bb loaded dictionary in bytes
+     * You could assume the analyzer won't convert each keyword into multiple tokens.
+     * Throws UnsupportedOperationException if the inverted index is not a positional index.
+     *
+     * @param phrase, a consecutive sequence of keywords
+     * @return a iterator of documents matching the query
+     */
+
+    public Iterator<Document> searchPhraseQuery(List<String> phrase) {
+        throw new UnsupportedOperationException("This is method for PositionalIndexManager, InvertedIndexManager does not support!");
+    }
+
+    /**
+     * Finds the keyword in the loaded PageChannelFile of the dictionary.
+     *
+     * @param pfc loaded segment from the disk
      * @param target the keyword to look for
      * @param segID the segment number to look for the target in
      * @return a list of integers containing the ID of documents matching the search
      */
 
-    private List<Integer> findKeyword(ByteBuffer bb, String target, int segID) {
-        while (bb.hasRemaining()) {
-            int wordLength = bb.getInt();
-            if (wordLength == 0) {
-                break;
+    private List<Integer> findKeyword(PageFileChannel pfc, String target, int segID) {
+        List<Integer> ans = new ArrayList<>();
+        int lim = pfc.getNumPages();
+        int pageNumber = 1;
+        while (pageNumber < lim) {
+            ByteBuffer bb = pfc.readPage(pageNumber);
+            bb.limit(PageFileChannel.PAGE_SIZE);
+            bb.rewind();
+            while (bb.hasRemaining()) {
+                int wordLength = bb.getInt();
+                if (wordLength == 0) {
+                    break;
+                }
+                byte[] word = new byte[wordLength];
+                for (int i = 0; i < wordLength; i++) {
+                    word[i] = bb.get();
+                }
+                String dictWord = new String(word);
+                int pageID = bb.getInt();
+                int offset = bb.getInt();
+                int length = bb.getInt();
+                if (dictWord.equals(target)) {
+                    ans = getIndexList(segID, pageID, offset, length);
+                    return ans;
+                }
             }
-            byte[] word = new byte[wordLength];
-            bb.get(word, 0, wordLength);
-            String dictWord = new String(word,StandardCharsets.UTF_8);
-            int pageID = bb.getInt();
-            int offset = bb.getInt();
-            int length = bb.getInt();
-            if (dictWord.equals(target)) {
-                List<Integer> ans = getIndexList(segID, pageID, offset, length);
-                return ans;
-            }
+            pageNumber++;
         }
-        return null;
+        return ans;
     }
 
     /**
@@ -856,14 +884,14 @@ public class InvertedIndexManager {
      * @return a list of documents matching the search
      */
 
-    public List<Document> getDocuments(int segID, List<Integer> idList) {
+    private List<Document> getDocuments(int segID, List<Integer> idList) {
         List<Document> ans = new ArrayList<>();
         String path = indexFolder + "/segment" + segID + ".db";
         DocumentStore ds = MapdbDocStore.createOrOpen(path);
         Iterator<Integer> docsIterator = ds.keyIterator();
         while (docsIterator.hasNext()) {
             int tempID = docsIterator.next();
-            if (idList.contains(tempID)) {
+            if (!idList.isEmpty() && idList.contains(tempID)) {
                 ans.add(ds.getDocument(tempID));
             }
         }
@@ -881,28 +909,29 @@ public class InvertedIndexManager {
      * @return a list of document IDs matching the search
      */
 
-    public List<Integer> getIndexList(int segID, int pageID, int offset, int length) {
-        ByteBuffer indexBuffer = readSegPage(segID, "b", pageID);
+    private List<Integer> getIndexList(int segID, int pageID, int offset, int length) {
+        Path path = Paths.get(indexFolder + "/segment" + segID + "b");
+        PageFileChannel pfc = PageFileChannel.createOrOpen(path);
+        ByteBuffer indexBuffer = pfc.readPage(pageID);
         indexBuffer.position(offset);
-
         List<Integer> ans = new ArrayList<>();
-        int remainInt = (indexBuffer.limit() - indexBuffer.position()) / 4;
-        int lSize = length;
-        while (lSize / remainInt >= 1) {
-            for (int i = 0; i < remainInt; i++) {
-                ans.add(indexBuffer.getInt());
+        for (int i = 0; i < length; i++) {
+            try {
+                int docID = indexBuffer.getInt();
+                ans.add(docID);
             }
-            pageID += 1;
-            indexBuffer = readSegPage(segID, "b", pageID);
-            lSize -= remainInt;
-            remainInt = PageFileChannel.PAGE_SIZE / 4;
+            catch (BufferUnderflowException e) {
+                pageID++;
+                indexBuffer = pfc.readPage(pageID);
+                indexBuffer.position(0);
+                int docID = indexBuffer.getInt();
+                ans.add(docID);
+            }
         }
-        for (int i = 0; i < lSize; i++) {
-            ans.add(indexBuffer.getInt());
-        }
+        pfc.close();
         return ans;
     }
-    
+
     /**
      * Performs merge for the and search query
      *
@@ -912,11 +941,14 @@ public class InvertedIndexManager {
      */
 
     private List<Integer> andMerge(List<Integer> list1, List<Integer> list2) {
+        // Collections.sort(list1);
+        // Collections.sort(list2);
+
+        List<Integer> ans = new ArrayList<>();
         // lists are considered to be sorted already
         if (list1.size() == 0 || list2.size() == 0) {
-            return null;
+            return ans;
         }
-        List<Integer> ans = new ArrayList<>();
         int p1 = 0;
         int p2 = 0;
         while (p1 < list1.size() && p2 < list2.size()) {
@@ -946,9 +978,13 @@ public class InvertedIndexManager {
      */
 
     private List<Integer> orMerge(List<Integer> list1, List<Integer> list2) {
+        // Collections.sort(list1);
+        // Collections.sort(list2);
+
+        List<Integer> ans = new ArrayList<>();
         // lists are considered to be sorted already
         if (list1.size() == 0 && list2.size() == 0) {
-            return null;
+            return ans;
         }
         if (list1.size() == 0) {
             return list2;
@@ -956,7 +992,6 @@ public class InvertedIndexManager {
         if (list2.size() == 0) {
             return list1;
         }
-        List<Integer> ans = new ArrayList<>();
         int p1 = 0;
         int p2 = 0;
         while (p1 < list1.size() && p2 < list2.size()) {
@@ -1016,26 +1051,27 @@ public class InvertedIndexManager {
      * @param keyword
      */
 
+    /**
+     * Deletes all documents in all disk segments of the inverted index that match the query.
+     * @param keyword
+     */
+
     public void deleteDocuments(String keyword) {
         List<String> word = analyzer.analyze(keyword);
-        keyword = word.get(0);
-        if (keyword.length() == 0 || word.size() == 0) {
+        if (word.size() == 0 || word.get(0).length() == 0) {
             return;
         }
+        keyword = word.get(0);
         int totalSegments = getNumSegments();
         for (int seg = 0; seg < totalSegments; seg++) {
             Path dictSeg = Paths.get(indexFolder + "/segment" + seg + "a");
             PageFileChannel pfc = PageFileChannel.createOrOpen(dictSeg);
-            // load the dictionary
-            ByteBuffer bb = pfc.readAllPages();
-            pfc.close();
-            bb.rewind();
-            int cap = bb.getInt();
-            bb.position(PageFileChannel.PAGE_SIZE);
-            List<Integer> info = findKeyword(bb, keyword, seg);
+            List<Integer> info = findKeyword(pfc, keyword, seg);
             if (info == null) {
                 continue;
             }
+
+            // creating a separate file for deleted documents for each segment
             Path deleted = Paths.get(indexFolder + "/segment" + seg + "d");
             pfc = PageFileChannel.createOrOpen(deleted);
             ByteBuffer deletedBuffer = ByteBuffer.allocate(info.size() * 4);
@@ -1052,17 +1088,28 @@ public class InvertedIndexManager {
      * @param segID the ID of the segment
      * @param docID the document ID
      */
-    
+
     private boolean isDeleted(int segID, int docID) {
         Path path = Paths.get(indexFolder + "/segment" + segID + "d");
         PageFileChannel pfc = PageFileChannel.createOrOpen(path);
-        ByteBuffer buf = pfc.readAllPages();
-        pfc.close();
-        buf.rewind();
-        while (buf.hasRemaining()) {
-            int id = buf.getInt();
-            if (id == docID) {
-                return true;
+        int lim = pfc.getNumPages();
+        int pageID = 0;
+        ByteBuffer buf = pfc.readPage(pageID);
+        buf.position(0);
+        while (true) {
+            try {
+                int id = buf.getInt();
+                if (id == docID) {
+                    return true;
+                }
+            }
+            catch (BufferUnderflowException e) {
+                pageID++;
+                if (pageID >= lim) {
+                    break;
+                }
+                buf = pfc.readPage(pageID);
+                buf.position(0);
             }
         }
         return false;
@@ -1135,22 +1182,6 @@ public class InvertedIndexManager {
         }
         ds.close();
         return new InvertedIndexSegmentForTest(invertedLists, documents);
-    }
-
-    /**
-     * Performs a phrase search on a positional index.
-     * Phrase search means the document must contain the consecutive sequence of keywords in exact order.
-     *
-     * You could assume the analyzer won't convert each keyword into multiple tokens.
-     * Throws UnsupportedOperationException if the inverted index is not a positional index.
-     *
-     * @param phrase, a consecutive sequence of keywords
-     * @return a iterator of documents matching the query
-     */
-    public Iterator<Document> searchPhraseQuery(List<String> phrase) {
-        Preconditions.checkNotNull(phrase);
-
-        throw new UnsupportedOperationException();
     }
 
     /**
