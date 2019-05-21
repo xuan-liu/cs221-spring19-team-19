@@ -1,5 +1,8 @@
+
 package edu.uci.ics.cs221.index.inverted;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -8,7 +11,7 @@ import java.util.List;
  */
 
 public class DeltaVarLenCompressor implements Compressor {
-    
+
     /**
      * Encodes a list of integers to a byte array.
      */
@@ -24,10 +27,10 @@ public class DeltaVarLenCompressor implements Compressor {
 
             // calculating the offset of the number from the previous one
             num -= offset;
-            
+
             // updating the offset
             offset += num;
-            
+
             // check if the number is negative
             if (num < 0) {
                 System.err.println("list needs to be sorted");
@@ -93,7 +96,7 @@ public class DeltaVarLenCompressor implements Compressor {
             Collections.reverse(byteList);
             vec.addAll(byteList);
         }
-        
+
         // creating the byte array out of the results
         byte[] coded = new byte[vec.size()];
         for (int i = 0; i < vec.size(); i++) {
@@ -113,7 +116,48 @@ public class DeltaVarLenCompressor implements Compressor {
 
     @Override
     public List<Integer> decode(byte[] bytes, int start, int length) {
-        return null;
+        List<Integer> decoded = new ArrayList<>();
+        List<Integer> preCoded = new ArrayList<>();
+        StringBuilder total = new StringBuilder();
+        
+        // start reading bytes
+        for (int i = start; i < start + length; i++) {
+            byte b = bytes[i];
+            
+            // binary string representation of the byte
+            String binary = String.format("%8s", Integer.toBinaryString(b & 0xFF)).replace(' ', '0');
+            
+            // last byte
+            if (binary.charAt(0) == '0') {
+                String temp = binary.substring(1);
+                total.append(temp);
+                preCoded.add(Integer.parseInt(total.toString(), 2));
+                total = new StringBuilder();
+            }
+            
+            // still bytes left to read
+            else if (binary.charAt(0) == '1' && i != start + length - 1) {
+                String temp = binary.substring(1);
+                total.append(temp);
+            }
+            
+            // bytes left to read but reader is at the end of the length
+            else {
+                System.err.println("length is too short to complete decoding");
+                String temp = binary.substring(1);
+                total.append(temp);
+                preCoded.add(Integer.parseInt(total.toString(), 2));
+            }
+        }
+
+        // decoding the numbers
+        int offset = 0;
+        for (int num : preCoded) {
+            num += offset;
+            offset = num;
+            decoded.add(num);
+        }
+        return decoded;
     }
     
 }
