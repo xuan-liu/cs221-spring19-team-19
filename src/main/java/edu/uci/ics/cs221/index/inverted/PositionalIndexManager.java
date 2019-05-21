@@ -651,19 +651,19 @@ public class PositionalIndexManager extends InvertedIndexManager {
      * @return a iterator of documents matching the query
      */
 
-    @Override
+        @Override
     public Iterator<Document> searchPhraseQuery(List<String> phrase) {
         Preconditions.checkNotNull(phrase);
         List<Document> docs = new ArrayList<>();
         int totalSegments = getNumSegments();
 
-        // the previous state of the phrase lists
-        Map<Integer, List<Integer>> prev = new HashMap<>();
-
         // searching each segment
         for (int seg = 0; seg < totalSegments; seg++) {
             Path dictSeg = Paths.get(indexFolder + "/segment" + seg + "a");
             PageFileChannel pfc = PageFileChannel.createOrOpen(dictSeg);
+
+            // the previous state of the phrase lists
+            Map<Integer, List<Integer>> prev = new HashMap<>();
 
             // the position of the keyword in the phrase
             int pos = 0;
@@ -676,8 +676,7 @@ public class PositionalIndexManager extends InvertedIndexManager {
                 }
                 keyword = word.get(0);
                 Map<Integer, List<Integer>> curr = findWord(pfc, keyword, seg);
-                List<Integer> tempList = new ArrayList<>(curr.keySet());
-                if (tempList.isEmpty()) {
+                if (curr.isEmpty()) {
                     break;
                 }
                 if (pos == 0) {
@@ -686,13 +685,17 @@ public class PositionalIndexManager extends InvertedIndexManager {
                 else {
                     prev = mapMerge(prev, curr, pos);
                 }
+                
+                // increment the position
                 pos++;
             }
             if (prev.isEmpty()) {
                 continue;
             }
+            
+            // find the documents matching the IDs
             List<Integer> idList = new ArrayList<>(prev.keySet());
-            List<Document> docList = getDocuments(seg, idList);
+            List<Document> docList = getDocs(seg, idList);
             if (docList.isEmpty()) {
                 continue;
             }
@@ -710,16 +713,23 @@ public class PositionalIndexManager extends InvertedIndexManager {
      * @return a list of integers containing the ID of documents matching the search
      */
 
-    private Map<Integer, List<Integer>> findWord(PageFileChannel pfc, String target, int segID) {
+        private Map<Integer, List<Integer>> findWord(PageFileChannel pfc, String target, int segID) {
         Map<Integer, List<Integer>> wordList = new HashMap<>();
+        
+        // get number of pages
         int cap = pfc.getNumPages();
+        
+        // start from the dictionary
         int pageNumber = 1;
         if (pageNumber >= cap) {
-            return wordList;
+            System.err.println("dictionary too short!");
+            System.exit(1);
         }
         ByteBuffer bb = pfc.readPage(pageNumber);
         bb.limit(PageFileChannel.PAGE_SIZE);
         bb.position(0);
+        
+        // reading the dictionary word info
         while (true) {
             int wordLength;
             byte[] word;
@@ -756,6 +766,8 @@ public class PositionalIndexManager extends InvertedIndexManager {
                     word[i] = bb.get();
                 }
             }
+            
+            // dictionary word
             String dictWord = new String(word);
             try {
                 pageID = bb.getInt();
@@ -793,6 +805,8 @@ public class PositionalIndexManager extends InvertedIndexManager {
                 bb.position(0);
                 length = bb.getInt();
             }
+            
+            // compare dictionary word with the target keyword
             if (dictWord.equals(target)) {
                 wordList = getPositionalIndexList(segID, pageID, offset, length);
                 return wordList;
@@ -800,6 +814,7 @@ public class PositionalIndexManager extends InvertedIndexManager {
         }
         return wordList;
     }
+    
     /**
      * Get all the documents matching the ID list in a segment.
      *
@@ -808,19 +823,25 @@ public class PositionalIndexManager extends InvertedIndexManager {
      * @return a list of documents matching the search
      */
 
-    private List<Document> getDocuments(int segID, List<Integer> idList) {
-        List<Document> ans = new ArrayList<>();
+    private List<Document> getDocs(int segID, List<Integer> idList) {
+        List<Document> docIDList = new ArrayList<>();
+        
+        // reading the documents in the segment
         String path = indexFolder + "/segment" + segID + ".db";
         DocumentStore ds = MapdbDocStore.createOrOpen(path);
         Iterator<Integer> docsIterator = ds.keyIterator();
+        
+        // finding docIDs that match the targetID
         while (docsIterator.hasNext()) {
             int tempID = docsIterator.next();
             if (!idList.isEmpty() && idList.contains(tempID)) {
-                ans.add(ds.getDocument(tempID));
+                docIDList.add(ds.getDocument(tempID));
             }
         }
+        
+        // closing the document store
         ds.close();
-        return ans;
+        return docIDList;
     }
 
     /**
@@ -836,41 +857,56 @@ public class PositionalIndexManager extends InvertedIndexManager {
     private Map<Integer, List<Integer>> getPositionalIndexList(int segID, int pageID, int offset, int length) {
         Path path = Paths.get(indexFolder + "/segment" + segID + "b");
         PageFileChannel pfc = PageFileChannel.createOrOpen(path);
+        
+        // number of pages in this segment
+        int cap = pfc.getNumPages();
         ByteBuffer indexBuffer = pfc.readPage(pageID);
         indexBuffer.position(offset);
+        
+        // reading docID, offset, and length in the positional listing
         Map<Integer, List<Integer>> posList = new HashMap<>();
         for (int i = 0; i < length; i++) {
-            int docID = -1;
-            int positionalOffset = -1;
+            int docID;
+            int positionalOffset;
             int positionalLength;
-            int mode = 0; // to detect where the exception happens
             try {
                 docID = indexBuffer.getInt();
-                mode++;
+            }
+            catch (BufferUnderflowException e) {
+                pageID++;
+                if (pageID >= cap) {
+                    System.err.println("reached end of pages while reading list!");
+                    System.exit(-1);
+                }
+                indexBuffer = pfc.readPage(pageID);
+                indexBuffer.position(0);
+                docID = indexBuffer.getInt();
+            }
+            try {
                 positionalOffset = indexBuffer.getInt();
-                mode++;
+            }
+            catch (BufferUnderflowException e) {
+                pageID++;
+                if (pageID >= cap) {
+                    System.err.println("reached end of pages while reading list!");
+                    System.exit(-1);
+                }
+                indexBuffer = pfc.readPage(pageID);
+                indexBuffer.position(0);
+                positionalOffset = indexBuffer.getInt();
+            }
+            try {
                 positionalLength = indexBuffer.getInt();
             }
             catch (BufferUnderflowException e) {
                 pageID++;
+                if (pageID >= cap) {
+                    System.err.println("reached end of pages while reading list!");
+                    System.exit(-1);
+                }
                 indexBuffer = pfc.readPage(pageID);
                 indexBuffer.position(0);
-                if (mode == 0) { // mode 0: exception occurred while reading docID
-                    docID = indexBuffer.getInt();
-                    positionalOffset = indexBuffer.getInt();
-                    positionalLength = indexBuffer.getInt();
-                }
-                else if (mode == 1) { // mode 1: exception occurred while reading positional offset
-                    positionalOffset = indexBuffer.getInt();
-                    positionalLength = indexBuffer.getInt();
-                }
-                else { // mode 2: exception occurred while reading positional list length
-                    positionalLength = indexBuffer.getInt();
-                }
-            }
-            if (docID == -1 || positionalOffset == -1 || positionalLength == -1) {
-                System.err.println("something went wrong in order to get the positional lists");
-                System.exit(-1);
+                positionalLength = indexBuffer.getInt();
             }
             List<Integer> positions = getPositionalList(segID, positionalOffset, positionalLength);
             posList.put(docID, positions);
@@ -892,20 +928,32 @@ public class PositionalIndexManager extends InvertedIndexManager {
         List<Integer> list = new ArrayList<>();
         Path path = Paths.get(indexFolder + "/segment" + segID + "c");
         PageFileChannel pfc = PageFileChannel.createOrOpen(path);
+        int cap = pfc.getNumPages();
+        
+        // getting the pageID
         int pageID = offset / PageFileChannel.PAGE_SIZE;
         ByteBuffer posBuffer = pfc.readPage(pageID);
+
+        // obtaining the offset in the page
         int pos = offset - pageID * PageFileChannel.PAGE_SIZE;
         posBuffer.position(pos);
+        
+        // reading the list
         for (int i = 0; i < length; i++) {
+            int id;
             try {
-                int id = posBuffer.getInt();
+                id = posBuffer.getInt();
                 list.add(id);
             }
             catch (BufferUnderflowException e) {
                 pageID++;
+                if (pageID >= cap) {
+                    System.err.println("reached end of file while reading positional list");
+                    System.exit(1);
+                }
                 posBuffer = pfc.readPage(pageID);
                 posBuffer.position(0);
-                int id = posBuffer.getInt();
+                id = posBuffer.getInt();
                 list.add(id);
             }
         }
@@ -927,8 +975,11 @@ public class PositionalIndexManager extends InvertedIndexManager {
         if (offset == 0) {
             return curr;
         }
-        if (curr.isEmpty() || prev.isEmpty() || offset < 0) {
-            throw new RuntimeException("two empty maps"); // TODO: change later
+        if (curr.isEmpty() || prev.isEmpty()) {
+            throw new RuntimeException("empty map(s) passed");
+        }
+        if (offset < 0) {
+            throw new RuntimeException("offset cannot be negative");
         }
         List<Integer> prevList = new ArrayList<>(prev.keySet());
         for (int id : prevList) {
