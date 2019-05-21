@@ -27,11 +27,15 @@ public class PunctuationTokenizer implements Tokenizer {
 
     public List<String> tokenize(String text) {
         List<String> result = new ArrayList<>();
-        StringTokenizer st = new StringTokenizer(text, " \t\n,.;?!");
+        StringBuilder del = new StringBuilder(" \n\t\r");
+        for (String temp : punctuations) {
+            del.append(temp);
+        }
+        StringTokenizer st = new StringTokenizer(text, del.toString());
         while (st.hasMoreTokens()) {
-            String temp = st.nextToken().toLowerCase();
-            if (!StopWords.stopWords.contains(temp)) {
-                result.add(temp);
+            String s = st.nextToken().toLowerCase();
+            if (!StopWords.stopWords.contains(s) && s.length() != 0) {
+                result.add(s);
             }
         }
         return result;
