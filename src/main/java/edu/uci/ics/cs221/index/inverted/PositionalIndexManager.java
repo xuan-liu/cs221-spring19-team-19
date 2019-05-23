@@ -4,6 +4,9 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.Table;
 import com.google.common.collect.TreeBasedTable;
 import edu.uci.ics.cs221.analysis.Analyzer;
+import edu.uci.ics.cs221.analysis.ComposableAnalyzer;
+import edu.uci.ics.cs221.analysis.PorterStemmer;
+import edu.uci.ics.cs221.analysis.PunctuationTokenizer;
 import edu.uci.ics.cs221.storage.Document;
 import edu.uci.ics.cs221.storage.DocumentStore;
 import edu.uci.ics.cs221.storage.MapdbDocStore;
@@ -13,6 +16,7 @@ import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
+import java.nio.BufferUnderflowException;
 
 public class PositionalIndexManager extends InvertedIndexManager {
     private static Table<String, Integer, List<Integer>> positions;
@@ -73,25 +77,50 @@ public class PositionalIndexManager extends InvertedIndexManager {
         }
         docID = 0;
 
-        // store the len(keywords), keywords, page(list), offset(list) (the offset of this page), len(list)
-        // in segmentXXa, with the first page have the total number of bytes the remaining pages will use
-
         ByteBuffer wordsBuffer = ByteBuffer.allocate(STORE_PARAMETER * invertedLists.size());
+        ByteBuffer listBuffer = ByteBuffer.allocate(STORE_PARAMETER * invertedLists.size());
+        ByteBuffer offPosBuffer = ByteBuffer.allocate(STORE_PARAMETER * invertedLists.size());
+        ByteBuffer positionBuffer = ByteBuffer.allocate(STORE_PARAMETER * 2 * invertedLists.size());
+
         int offset = 0;
         int pageID = 0;
+        int offsetPos = 0;
 
         for (String word: invertedLists.keySet()) {
+
+            // store the posting lists in segmentXXb (for every docID, offset(position list), lenOfByte(position list)),
+            // store all the position lists in segmentXXc
+
+            List<Integer> postingList = invertedLists.get(word);
+            int postingListLen = 0;
+            for (int docID: postingList) {
+                List<Integer> positionList = positions.get(word, docID);
+                byte[] positionListByte = compressor.encode(positionList);
+                positionBuffer.put(positionListByte);
+
+                List<Integer> docInfo = Arrays.asList(docID, offsetPos, positionListByte.length);
+                byte[] docInfoByte = compressor.encode(docInfo);
+                listBuffer.put(docInfoByte);
+
+                postingListLen += docInfoByte.length;
+                offsetPos += positionListByte.length;
+            }
+
+            // store the len(keywords), keywords, page(list), offset(list) (the offset of this page), lenOfByte(list)
+            // in segmentXXa, with the first page have the total number of bytes the remaining pages will use
+
             WordInfo wi = new WordInfo();
-            wi.setWordInfo(word, pageID, offset, invertedLists.get(word).size());
+            wi.setWordInfo(word, pageID, offset, postingListLen);
             wi.writeOneWord(wordsBuffer);
 
-            offset += invertedLists.get(word).size() * 3 * 4;
+            offset += postingListLen;
             if (offset >= PageFileChannel.PAGE_SIZE) {
                 pageID += 1;
                 offset -= PageFileChannel.PAGE_SIZE;
             }
         }
 
+        // write the dictionary
         Path wordsPath = Paths.get(indexFolder + "/segment" + segmentID + "a");
         PageFileChannel wordsFileChannel = PageFileChannel.createOrOpen(wordsPath);
 
@@ -102,34 +131,13 @@ public class PositionalIndexManager extends InvertedIndexManager {
         wordsFileChannel.appendAllBytes(wordsBuffer);
         wordsFileChannel.close();
 
-        // store the posting lists in segmentXXb (for every docID, offset(position list), len(position list)),
-        // store all the position lists in segmentXXc
-
-        ByteBuffer listBuffer = ByteBuffer.allocate(STORE_PARAMETER * invertedLists.size());
-        ByteBuffer positionBuffer = ByteBuffer.allocate(STORE_PARAMETER * 2 * invertedLists.size());
-
-        int offsetPos = 0;
-        for (String word: invertedLists.keySet()) {
-            List<Integer> postingList = invertedLists.get(word);
-            for (int docID: postingList) {
-                List<Integer> positionList = positions.get(word, docID);
-
-
-                for (int pos: positionList) {
-                    positionBuffer.putInt(pos);
-                }
-                listBuffer.putInt(docID);
-                listBuffer.putInt(offsetPos);
-                listBuffer.putInt(positionList.size());
-                offsetPos += positionList.size() * 4;
-            }
-        }
-
+        // write the posting list
         Path listPath = Paths.get(indexFolder+"/segment" + segmentID + "b");
         PageFileChannel listFileChannel = PageFileChannel.createOrOpen(listPath);
         listFileChannel.appendAllBytes(listBuffer);
         listFileChannel.close();
 
+        // write the position list
         Path positionPath = Paths.get(indexFolder+"/segment" + segmentID + "c");
         PageFileChannel positionFileChannel = PageFileChannel.createOrOpen(positionPath);
         positionFileChannel.appendAllBytes(positionBuffer);
@@ -1057,7 +1065,7 @@ public class PositionalIndexManager extends InvertedIndexManager {
         wordsFileChannel.close();
         int lim = readFirstPageOfWord(wordsBuffer);
 
-        // based on remaining page, build map<String, Integer> in which key is keyword, value is len(list)
+        // based on remaining page, build map<String, Integer> in which key is keyword, value is lenOfByte(list)
         WordInfo wi = new WordInfo();
         while (wordsBuffer.hasRemaining()) {
             wi.readOneWord(wordsBuffer);
@@ -1080,16 +1088,20 @@ public class PositionalIndexManager extends InvertedIndexManager {
         for (String word: wordDic.keySet()) {
             List<Integer> postingList = new LinkedList<>();
             int listLen = wordDic.get(word);
-            for (int i = 0; i < listLen; i++) {
-                int docID = listBuffer.getInt();
-                postingList.add(docID);
-                int offsetPos = listBuffer.getInt();
-                int lenPos = listBuffer.getInt();
+            byte[] listb = new byte[listLen];
+            listBuffer.get(listb, 0, listLen);
+            List<Integer> listInfo = compressor.decode(listb, 0, listb.length);
 
-                List<Integer> positionList = new LinkedList<>();
-                for (int j = 0; j < lenPos; j++) {
-                    positionList.add(positionBuffer.getInt());
-                }
+            for (int i = 0; i < listInfo.size(); i += 3) {
+                int docID = listInfo.get(i);
+                postingList.add(docID);
+                int offsetPos = listInfo.get(i + 1);
+                int lenPos = listInfo.get(i + 2);
+
+                byte[] positionb = new byte[lenPos];
+                positionBuffer.get(positionb, 0, lenPos);
+                List<Integer> positionList = compressor.decode(positionb, 0, positionb.length);
+
                 positions.put(word, docID, positionList);
             }
             invertedLists.put(word, postingList);
@@ -1104,5 +1116,17 @@ public class PositionalIndexManager extends InvertedIndexManager {
         }
         ds.close();
         return new PositionalIndexSegmentForTest(invertedLists, documents, positions);
+    }
+
+    public static void main(String[] args) {
+        ComposableAnalyzer analyzer = new ComposableAnalyzer(new PunctuationTokenizer(), new PorterStemmer());
+        DeltaVarLenCompressor compressor = new DeltaVarLenCompressor();
+        InvertedIndexManager ii = InvertedIndexManager.createOrOpenPositional("./index/Team20FlushTest/", analyzer, compressor);
+
+        ii.addDocument(new Document("cat dog"));
+        ii.addDocument(new Document("cat elephant"));
+        ii.flush();
+        PositionalIndexSegmentForTest segment = ii.getIndexSegmentPositional(0);
+        System.out.println(segment);
     }
 }

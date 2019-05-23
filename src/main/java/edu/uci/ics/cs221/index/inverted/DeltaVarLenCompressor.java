@@ -2,6 +2,7 @@
 package edu.uci.ics.cs221.index.inverted;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
