@@ -1,10 +1,12 @@
-
 package edu.uci.ics.cs221.index.positional;
 
 import com.google.common.collect.Table;
 import com.google.common.collect.HashBasedTable;
 import edu.uci.ics.cs221.analysis.NaiveAnalyzer;
-import edu.uci.ics.cs221.index.inverted.*;
+import edu.uci.ics.cs221.index.inverted.Compressor;
+import edu.uci.ics.cs221.index.inverted.InvertedIndexManager;
+import edu.uci.ics.cs221.index.inverted.PositionalIndexSegmentForTest;
+import edu.uci.ics.cs221.index.inverted.NaiveCompressor;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -38,8 +40,8 @@ public class Team19PositionalFlushTest {
     public void setup() throws Exception {
         Path path = Paths.get(file);
         Files.deleteIfExists(path);
-        iim = iim.createOrOpenPositional(file, an, cp);
-        iim.DEFAULT_FLUSH_THRESHOLD = 3;
+        iim = InvertedIndexManager.createOrOpenPositional(file, an, cp);
+        InvertedIndexManager.DEFAULT_FLUSH_THRESHOLD = 3;
     }
 
     @After
@@ -57,7 +59,7 @@ public class Team19PositionalFlushTest {
         }
         Files.deleteIfExists(Paths.get(file));
 
-        iim.DEFAULT_FLUSH_THRESHOLD = 1000;
+        InvertedIndexManager.DEFAULT_FLUSH_THRESHOLD = 1000;
     }
 
     // test flush when flush() is called automatically, whether the total number of segments is correct
