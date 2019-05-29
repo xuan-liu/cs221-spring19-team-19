@@ -70,7 +70,7 @@ public class PositionalIndexManager extends InvertedIndexManager {
     @Override
     public void flush() {
         // If the buffer is empty, return
-        if (invertedLists.size() == 0 && documents.size() == 0) {
+        if (invertedLists.size() == 0 || documents.size() == 0) {
             return;
         }
         docID = 0;
@@ -78,7 +78,7 @@ public class PositionalIndexManager extends InvertedIndexManager {
         ByteBuffer wordsBuffer = ByteBuffer.allocate(STORE_PARAMETER * invertedLists.size());
         ByteBuffer listBuffer = ByteBuffer.allocate(STORE_PARAMETER * invertedLists.size());
         ByteBuffer offPosBuffer = ByteBuffer.allocate(STORE_PARAMETER * invertedLists.size());
-        ByteBuffer positionBuffer = ByteBuffer.allocate(STORE_PARAMETER * 10 * invertedLists.size());
+        ByteBuffer positionBuffer = ByteBuffer.allocate(STORE_PARAMETER * invertedLists.size());
 
         int offsetB = 0; // in dic, represent the offset of posting list
         int offsetD = 0; // in dic, represent the offset of offsetPos "offset (position list) + end offset"
@@ -131,25 +131,25 @@ public class PositionalIndexManager extends InvertedIndexManager {
         writeFirstPageOfWord(wordsFileChannel, wordsBuffer.position());
 
         // write the remaining page
-        wordsFileChannel.appendAllBytes(wordsBuffer);
+        wordsFileChannel.appendAllBytes(fitBuffer(wordsBuffer));
         wordsFileChannel.close();
 
         // write the posting list
         Path listPath = Paths.get(indexFolder+"/segment" + segmentID + "b");
         PageFileChannel listFileChannel = PageFileChannel.createOrOpen(listPath);
-        listFileChannel.appendAllBytes(listBuffer);
+        listFileChannel.appendAllBytes(fitBuffer(listBuffer));
         listFileChannel.close();
 
         // write the offsetPos list
         Path offsetPath = Paths.get(indexFolder+"/segment" + segmentID + "d");
         PageFileChannel offsetFileChannel = PageFileChannel.createOrOpen(offsetPath);
-        offsetFileChannel.appendAllBytes(offPosBuffer);
+        offsetFileChannel.appendAllBytes(fitBuffer(offPosBuffer));
         offsetFileChannel.close();
 
         // write the position list
         Path positionPath = Paths.get(indexFolder+"/segment" + segmentID + "c");
         PageFileChannel positionFileChannel = PageFileChannel.createOrOpen(positionPath);
-        positionFileChannel.appendAllBytes(positionBuffer);
+        positionFileChannel.appendAllBytes(fitBuffer(positionBuffer));
         positionFileChannel.close();
 
         // store all the documents in segmentXX.db
@@ -166,6 +166,23 @@ public class PositionalIndexManager extends InvertedIndexManager {
         if (segmentID >= DEFAULT_MERGE_THRESHOLD) {
             mergeAllSegments();
         }
+    }
+
+    /**
+     * fit a suitable ByteBuffer for a byte array.
+     *
+     * @param bb the previous ByteBuffer
+     * @return the outcome ByteBuffer
+     */
+
+    private ByteBuffer fitBuffer(ByteBuffer bb) {
+        int tmp = bb.position();
+        bb.position(0);
+        bb.limit(tmp);
+        ByteBuffer bb_new = ByteBuffer.allocate(tmp);
+        bb_new.put(bb);
+        bb_new.rewind();
+        return bb_new;
     }
 
     /**
@@ -192,9 +209,12 @@ public class PositionalIndexManager extends InvertedIndexManager {
      * write a ByteBuffer containing position list into buffer by page, if the list length is larger than the page size,
      * append the page and open another buffer
      *
-     * @param segID the file being written
+     * @param segID the segment ID
      * @param bb the BybeBuffer being written with capacity = PAGE_SIZE
-     * @param pageIDRead the BybeBuffer being read
+     * @param pageIDRead the page of the file being read
+     * @param len the length of byte of the list
+     * @param x the part of segment (a represent dictionary, b represent posting list, c represent position list, d represent offset list
+     * @return the BybeBuffer being read, the outcome byte array, the page of the file being read
      */
 
     private BufferAndByte readListBufferByPage(int segID, ByteBuffer bb, int pageIDRead, int len, String x) {
@@ -202,7 +222,7 @@ public class PositionalIndexManager extends InvertedIndexManager {
         int lSize = len;
         ByteArrayOutputStream output = new ByteArrayOutputStream();
 
-        // if the list is longer than the remaining buffer, first read the buffer,
+        // if the array is longer than the remaining buffer, first read the buffer,
         // then open the next page and read
 
         while (lSize / remain >= 1) {
@@ -216,12 +236,13 @@ public class PositionalIndexManager extends InvertedIndexManager {
             remain = PageFileChannel.PAGE_SIZE;
         }
 
-        // if the list is no longer than the remaining buffer, just read the buffer
+        // if the array is no longer than the remaining buffer, just read the buffer
         byte[] result = new byte[lSize];
         bb.get(result, 0, lSize);
         output.write(result, 0, result.length);
         byte[] out = output.toByteArray();
 
+        // if the list is offset list, also return the start offset and end offset
         if (x == "d") {
             List<Integer> list = compressor.decode(out);
             return new BufferAndByte(bb, out, pageIDRead, list.get(0), list.get(list.size() - 1));
@@ -231,12 +252,20 @@ public class PositionalIndexManager extends InvertedIndexManager {
     }
 
 
+    /**
+     * Write the byte array into buffer by page, if the list length is larger than the page size,
+     * append the page and open another buffer
+     *
+     * @param pfc the file being written
+     * @param bb the BybeBuffer being written with capacity = PAGE_SIZE
+     * @param b the byte array
+     */
+
     private void writeListBufferByPage(PageFileChannel pfc, ByteBuffer bb, byte[] b) {
         int lSize = b.length;
         int remain = bb.limit() - bb.position();
-        int lPos = 0;
 
-        // if the posting list is longer than the remaining buffer, first write the buffer,
+        // if the array is longer than the remaining buffer, first write the buffer,
         // then append the page and open another buffer to write
         while (lSize / remain >= 1) {
             byte[] tmp = new byte[remain];
@@ -252,9 +281,17 @@ public class PositionalIndexManager extends InvertedIndexManager {
             remain = PageFileChannel.PAGE_SIZE;
         }
 
-        // if the posting list is no longer than the remaining buffer, just write the buffer
+        // if the array is no longer than the remaining buffer, just write the buffer
         bb.put(b);
     }
+
+    /**
+     * for a byte array, decode it to list, add n to every list elements, and encode it to a list and return it
+     *
+     * @param bl the byte array being added
+     * @param n the number being added
+     * @return the outcome byte array
+     */
 
     private byte[] addNumList(byte[] bl, int n) {
         List<Integer> list = compressor.decode(bl, 0, bl.length);
@@ -265,6 +302,14 @@ public class PositionalIndexManager extends InvertedIndexManager {
         return compressor.encode(listNew);
     }
 
+    /**
+     * add the second byte array behind the first byte array
+     *
+     * @param b1 the first byte array
+     * @param b2 the second byte array
+     * @return the outcome byte array
+     */
+
     private byte[] joinTwoByte(byte[] b1, byte[] b2) {
         byte[] lsNew = new byte[b1.length + b2.length];
         System.arraycopy(b1, 0, lsNew, 0, b1.length);
@@ -272,7 +317,18 @@ public class PositionalIndexManager extends InvertedIndexManager {
         return lsNew;
     }
 
+    /**
+     * when merge, change the offset list. If there are two byte arrays, join it to be a new byte array.
+     * If there are only one byte array, change it to be a new byte array.
+     *
+     * @param a the first byte array
+     * @param b the second byte array
+     * @param offStart the start offset in the writing buffer
+     * @return the outcome byte array
+     */
+
     private byte[] joinTwoOffPosList(byte[] a, byte[] b, int offStart) {
+        // if there are only one byte array, change it to be a new byte array
         if (b == null) {
             List<Integer> la = compressor.decode(a, 0, a.length);
             List<Integer> lnew = new ArrayList<>();
@@ -283,6 +339,7 @@ public class PositionalIndexManager extends InvertedIndexManager {
             return compressor.encode(lnew);
         }
 
+        // if there are two byte arrays, join it to be a new byte array
         List<Integer> la = compressor.decode(a, 0, a.length);
         List<Integer> lb = compressor.decode(b, 0, b.length);
         List<Integer> lnew = new ArrayList<>();
@@ -297,8 +354,6 @@ public class PositionalIndexManager extends InvertedIndexManager {
         }
         return compressor.encode(lnew);
     }
-
-
 
     /**
      * Merges the invertedLists of two disk segments
@@ -659,7 +714,7 @@ public class PositionalIndexManager extends InvertedIndexManager {
         }
 
         // set position file
-        positionFileChannel.appendAllBytes(positionBuffer);
+        positionFileChannel.appendAllBytes(fitBuffer(positionBuffer));
         positionFileChannel.close();
         deleteFile(indexFolder + "/segment" + segID1 + "c");
         deleteFile(indexFolder + "/segment" + segID2 + "c");
@@ -669,7 +724,7 @@ public class PositionalIndexManager extends InvertedIndexManager {
         f1.renameTo(f2);
 
         // set list file
-        listFileChannel.appendAllBytes(listBuffer);
+        listFileChannel.appendAllBytes(fitBuffer(listBuffer));
         listFileChannel.close();
         deleteFile(indexFolder + "/segment" + segID1 + "b");
         deleteFile(indexFolder + "/segment" + segID2 + "b");
@@ -679,7 +734,7 @@ public class PositionalIndexManager extends InvertedIndexManager {
         f1.renameTo(f2);
 
         // set offPos file
-        offPosFileChannel.appendAllBytes(offPosBuffer);
+        offPosFileChannel.appendAllBytes(fitBuffer(offPosBuffer));
         offPosFileChannel.close();
         deleteFile(indexFolder + "/segment" + segID1 + "d");
         deleteFile(indexFolder + "/segment" + segID2 + "d");
@@ -694,7 +749,7 @@ public class PositionalIndexManager extends InvertedIndexManager {
 
         writeFirstPageOfWord(wordsFileChannel, wordsBuffer.position());
 
-        wordsFileChannel.appendAllBytes(wordsBuffer);
+        wordsFileChannel.appendAllBytes(fitBuffer(wordsBuffer));
         wordsFileChannel.close();
     }
 
@@ -1174,19 +1229,4 @@ public class PositionalIndexManager extends InvertedIndexManager {
         return new PositionalIndexSegmentForTest(invertedLists, documents, positions);
     }
 
-    public static void main(String[] args) {
-//        Analyzer an = new NaiveAnalyzer();
-//        Compressor compressor = new NaiveCompressor();
-//        InvertedIndexManager ii = InvertedIndexManager.createOrOpenPositional("./index/Team20FlushTest/", an, compressor);
-//
-//        ii.addDocument(new Document("cat dog"));
-//        ii.addDocument(new Document("cat elephant"));
-//        ii.addDocument(new Document("wolf dog dog"));
-//        ii.flush();
-//        PositionalIndexSegmentForTest segment = ii.getIndexSegmentPositional(0);
-//        System.out.println(segment);
-//        ByteArrayOutputStream output = new ByteArrayOutputStream();
-//        byte[] b = null;
-//        output.writeBytes(b);
-    }
 }
