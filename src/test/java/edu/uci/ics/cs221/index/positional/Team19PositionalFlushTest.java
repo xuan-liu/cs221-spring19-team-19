@@ -71,6 +71,7 @@ public class Team19PositionalFlushTest {
         iim.addDocument(new Document("wolf dog dog"));
         iim.addDocument(new Document("cat dog"));
         iim.flush();
+
         assertEquals(2, iim.getNumSegments());
 
         Map<String, List<Integer>> PostingList = new HashMap<>();
