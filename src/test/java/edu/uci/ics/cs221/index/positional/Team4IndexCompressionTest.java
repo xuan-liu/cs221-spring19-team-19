@@ -99,6 +99,7 @@ public class Team4IndexCompressionTest {
         this.dvlIndexManager.flush();
         int dvlCount = PageFileChannel.writeCounter;
 
+        System.out.println(naiveCount/(double)dvlCount);
         assertTrue(naiveCount/(double)dvlCount < 4);
         assertTrue(naiveCount/(double)dvlCount > 1.5);
     }
