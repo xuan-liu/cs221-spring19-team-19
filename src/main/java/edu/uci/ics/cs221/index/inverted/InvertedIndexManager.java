@@ -49,7 +49,7 @@ public class InvertedIndexManager {
      */
     
     public static int DEFAULT_MERGE_THRESHOLD = 8;
-    public static int STORE_PARAMETER = 5000;
+    public static int STORE_PARAMETER = 50000;
 
     Map<String, List<Integer>> invertedLists;
     Map<Integer, Document> documents;
@@ -338,7 +338,7 @@ public class InvertedIndexManager {
 
     /**
      * read a given page in the segment x into buffer (x = a represent reading dictionary, b represent reading
-     * posting list, c represent reading position list)
+     * posting list, c represent reading position list, d represent offset position list)
      *
      * @param segID the segment ID
      * @param x the part of segment (a represent dictionary, b represent posting list, c represent position list)
@@ -675,7 +675,7 @@ public class InvertedIndexManager {
      * @param keyword keyword, cannot be null.
      * @return a iterator of documents matching the query
      */
-    
+
     /**
      * Performs a single keyword search on the inverted index.
      * You could assume the analyzer won't convert the keyword into multiple tokens.
@@ -722,7 +722,7 @@ public class InvertedIndexManager {
      * @param keywords a list of keywords in the AND query
      * @return a iterator of documents matching the query
      */
-    
+
     public Iterator<Document> searchAndQuery(List<String> keywords) {
         Preconditions.checkNotNull(keywords);
         int totalSegments = getNumSegments();
@@ -1198,29 +1198,41 @@ public class InvertedIndexManager {
         throw new UnsupportedOperationException("This is method for PositionalIndexManager, InvertedIndexManager does not support!");
     }
 
-    /**
-     * Get a ByteBuffer containing the whole position list of a word be page in a given segment from a buffer,
-     * using the total length of position lists. (method for PositionalIndexManager)
-     *
-     * @param segID the segment ID
-     * @param bbr the BybeBuffer being read with capacity = PAGE_SIZE
-     * @param pageIDReadPos the page of the posting list file being read
-     * @param totalLenPos the total length of position lists
-     * @return the BybeBuffer being read, the BybeBuffer being written, the page of the posting list file being read
-     */
-    BufferBuffer readPositionBufferByPage(int segID, ByteBuffer bbr, int pageIDReadPos, int totalLenPos) {
-        throw new UnsupportedOperationException("This is method for PositionalIndexManager, InvertedIndexManager does not support!");
-    }
-
-    /**
-     * write a ByteBuffer containing position list into buffer by page, if the list length is larger than the page size,
-     * append the page and open another buffer. (method for PositionalIndexManager)
-     *
-     * @param pfc the file being written
-     * @param bbw the BybeBuffer being written with capacity = PAGE_SIZE
-     * @param bbr the BybeBuffer being read
-     */
-    void writePositionBufferByPage(PageFileChannel pfc, ByteBuffer bbw, ByteBuffer bbr) {
-        throw new UnsupportedOperationException("This is method for PositionalIndexManager, InvertedIndexManager does not support!");
-    }
+//    /**
+//     * Get a ByteBuffer containing the whole position list of a word be page in a given segment from a buffer,
+//     * using the total length of position lists. (method for PositionalIndexManager)
+//     *
+//     * @param segID the segment ID
+//     * @param bbr the BybeBuffer being read with capacity = PAGE_SIZE
+//     * @param pageIDReadPos the page of the posting list file being read
+//     * @param totalLenPos the total length of position lists
+//     * @return the BybeBuffer being read, the BybeBuffer being written, the page of the posting list file being read
+//     */
+//    BufferAndByte readListBufferByPage(int segID, ByteBuffer bb, int pageIDRead, int len, String x) {
+//        throw new UnsupportedOperationException("This is method for PositionalIndexManager, InvertedIndexManager does not support!");
+//    }
+//
+//    /**
+//     * write a ByteBuffer containing position list into buffer by page, if the list length is larger than the page size,
+//     * append the page and open another buffer. (method for PositionalIndexManager)
+//     *
+//     * @param pfc the file being written
+//     * @param bbw the BybeBuffer being written with capacity = PAGE_SIZE
+//     * @param bbr the BybeBuffer being read
+//     */
+//    void writeListBufferByPage(PageFileChannel pfc, ByteBuffer bb, byte[] b) {
+//        throw new UnsupportedOperationException("This is method for PositionalIndexManager, InvertedIndexManager does not support!");
+//    }
+//
+//    byte[] addNumList(byte[] bl, int n) {
+//        throw new UnsupportedOperationException("This is method for PositionalIndexManager, InvertedIndexManager does not support!");
+//    }
+//
+//    byte[] joinTwoByte(byte[] b1, byte[] b2) {
+//        throw new UnsupportedOperationException("This is method for PositionalIndexManager, InvertedIndexManager does not support!");
+//    }
+//
+//    byte[] joinTwoOffPosList(byte[] a, byte[] b, int offStart) {
+//        throw new UnsupportedOperationException("This is method for PositionalIndexManager, InvertedIndexManager does not support!");
+//    }
 }
