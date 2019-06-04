@@ -1175,6 +1175,7 @@ public class PositionalIndexManager extends InvertedIndexManager {
         PositionalWordInfo wi = new PositionalWordInfo();
         while (wordsBuffer.hasRemaining()) {
             wi.readOneWord(wordsBuffer);
+            System.out.println(wi.word);
             wordDic.put(wi.word, Arrays.asList(wi.lenB, wi.lenD));
         }
 
@@ -1229,4 +1230,71 @@ public class PositionalIndexManager extends InvertedIndexManager {
         return new PositionalIndexSegmentForTest(invertedLists, documents, positions);
     }
 
+    /**
+     * Returns the number of documents containing the token within the given segment.
+     * The token should be already analyzed by the analyzer. The analyzer shouldn't be applied again.
+     */
+
+    @Override
+    public int getDocumentFrequency(int segmentNum, String token) {
+        int lenList = -1;
+        int offsetList = -1;
+
+        // read segmentXXa
+        Path wordsPath = Paths.get(indexFolder + "/segment" + segmentNum + "a");
+        PageFileChannel wordsFileChannel = PageFileChannel.createOrOpen(wordsPath);
+
+        ByteBuffer wordsBuffer = wordsFileChannel.readAllPages();
+        wordsFileChannel.close();
+        readFirstPageOfWord(wordsBuffer);
+
+        // based on remaining page, search the dictionary for the token and get the offset(list), lenOfByte(list)
+        PositionalWordInfo wi = new PositionalWordInfo();
+        while (wordsBuffer.hasRemaining()) {
+            wi.readOneWord(wordsBuffer);
+            if (token.equals(wi.word)) {
+                offsetList = wi.offsetB;
+                lenList = wi.lenB;
+                break;
+            }
+        }
+        if (lenList == -1 || offsetList == -1) {return 0;}
+
+        // read segmentXXb base on offset(list), lenOfByte(list)
+        Path listPath = Paths.get(indexFolder + "/segment" + segmentNum + "b");
+        PageFileChannel listFileChannel = PageFileChannel.createOrOpen(listPath);
+        int pageIDRead = offsetList/PageFileChannel.PAGE_SIZE;
+        ByteBuffer bb = listFileChannel.readPage(pageIDRead);
+        listFileChannel.close();
+        bb.position(offsetList % PageFileChannel.PAGE_SIZE);
+
+        // get invertedLists for the token
+        int remain = bb.limit() - bb.position();
+        int lSize = lenList;
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+
+        // if the array is longer than the remaining buffer, first read the buffer,
+        // then open the next page and read
+
+        while (lSize / remain >= 1) {
+            byte[] result = new byte[remain];
+            bb.get(result, 0, remain);
+            output.write(result, 0, result.length);
+
+            pageIDRead += 1;
+            bb = readSegPage(segmentNum, "b", pageIDRead);
+            lSize -= remain;
+            remain = PageFileChannel.PAGE_SIZE;
+        }
+
+        // if the array is no longer than the remaining buffer, just read the buffer
+        byte[] result = new byte[lSize];
+        bb.get(result, 0, lSize);
+        output.write(result, 0, result.length);
+        byte[] out = output.toByteArray();
+
+        // get the length of the inverted list
+        List<Integer> list = compressor.decode(out, 0, out.length);
+        return list.size();
+    }
 }
