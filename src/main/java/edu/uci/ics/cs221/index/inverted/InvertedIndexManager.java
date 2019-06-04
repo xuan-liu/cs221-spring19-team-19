@@ -1124,7 +1124,7 @@ public class InvertedIndexManager {
 
         ByteBuffer wordsBuffer = wordsFileChannel.readAllPages();
         wordsFileChannel.close();
-        int lim = readFirstPageOfWord(wordsBuffer);
+        readFirstPageOfWord(wordsBuffer);
 
         // based on remaining page, build map<String, Integer> in which key is keyword, value is len(list)
         WordInfo wi = new WordInfo();
@@ -1196,7 +1196,10 @@ public class InvertedIndexManager {
      * Returns the total number of documents within the given segment.
      */
     public int getNumDocuments(int segmentNum) {
-        throw new UnsupportedOperationException();
+        DocumentStore ds = MapdbDocStore.createOrOpen(indexFolder + "/segment" + segmentNum + ".db");
+        int numDoc = (int) ds.size();
+        ds.close();
+        return numDoc;
     }
 
     /**
@@ -1204,8 +1207,23 @@ public class InvertedIndexManager {
      * The token should be already analyzed by the analyzer. The analyzer shouldn't be applied again.
      */
     public int getDocumentFrequency(int segmentNum, String token) {
-        throw new UnsupportedOperationException();
+        int lenList = 0;
+        // read segmentXXa
+        Path wordsPath = Paths.get(indexFolder + "/segment" + segmentNum + "a");
+        PageFileChannel wordsFileChannel = PageFileChannel.createOrOpen(wordsPath);
+        ByteBuffer wordsBuffer = wordsFileChannel.readAllPages();
+        wordsFileChannel.close();
+        readFirstPageOfWord(wordsBuffer);
+
+        // based on remaining page, search the dictionary for the token and get the len(list)
+        WordInfo wi = new WordInfo();
+        while (wordsBuffer.hasRemaining()) {
+            wi.readOneWord(wordsBuffer);
+            if (token.equals(wi.word)) {
+                lenList = wi.len;
+                break;
+            }
+        }
+        return lenList;
     }
-
-
 }
