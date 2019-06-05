@@ -1,5 +1,6 @@
 package edu.uci.ics.cs221.index.inverted;
 
+import java.util.Comparator;
 import java.util.Objects;
 
 public class Pair<L, R> {
