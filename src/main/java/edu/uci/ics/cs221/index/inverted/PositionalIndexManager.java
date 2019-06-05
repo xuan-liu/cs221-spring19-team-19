@@ -17,49 +17,11 @@ import java.nio.BufferUnderflowException;
 import java.io.ByteArrayOutputStream;
 
 public class PositionalIndexManager extends InvertedIndexManager {
-    private static Table<String, Integer, List<Integer>> positions;
     private Compressor compressor;
 
     public PositionalIndexManager(String indexFolder, Analyzer analyzer, Compressor compressor) {
         super(indexFolder, analyzer);
-        this.positions = TreeBasedTable.create();
         this.compressor = compressor;
-    }
-
-    /**
-     * Adds a document to the inverted index and the position list
-     * Document should live in a in-memory buffer until `flush()` is called to write the segment to disk.
-     * @param document
-     */
-
-    @Override
-    public void addDocument(Document document) {
-        List<String> wordList = analyzer.analyze(document.getText());
-        for (int i = 0; i < wordList.size(); i++) {
-            String word = wordList.get(i);
-            if (invertedLists.containsKey(word)) {
-                List<Integer> tmp = invertedLists.get(word);
-                if (!(tmp.get(tmp.size() - 1) == docID)) {
-                    tmp.add(docID);
-                }
-                tmp = positions.get(word, docID);
-                if (tmp == null) {
-                    positions.put(word, docID, new LinkedList<>(Arrays.asList(i)));
-                } else {
-                    tmp.add(i);
-                }
-            } else {
-                invertedLists.put(word, new LinkedList<>(Arrays.asList(docID)));
-                positions.put(word, docID, new LinkedList<>(Arrays.asList(i)));
-            }
-        }
-        documents.put(docID, document);
-        docID += 1;
-
-        // if the num of document reach DEFAULT_FLUSH_THRESHOLD, call flush()
-        if (docID >= DEFAULT_FLUSH_THRESHOLD) {
-            flush();
-        }
     }
 
     /**
@@ -94,6 +56,7 @@ public class PositionalIndexManager extends InvertedIndexManager {
 
             for (int docID: postingList) {
                 List<Integer> positionList = positions.get(word, docID);
+
                 byte[] positionListByte = compressor.encode(positionList);
                 positionBuffer.put(positionListByte);
 

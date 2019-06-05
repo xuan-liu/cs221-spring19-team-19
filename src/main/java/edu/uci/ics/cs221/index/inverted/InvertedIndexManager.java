@@ -2,6 +2,8 @@ package edu.uci.ics.cs221.index.inverted;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Iterators;
+import com.google.common.collect.Table;
+import com.google.common.collect.TreeBasedTable;
 import edu.uci.ics.cs221.analysis.Analyzer;
 import edu.uci.ics.cs221.storage.Document;
 import edu.uci.ics.cs221.storage.DocumentStore;
@@ -55,6 +57,7 @@ public class InvertedIndexManager {
     int segmentID;
     Analyzer analyzer;
     String indexFolder;
+    Table<String, Integer, List<Integer>> positions;
 
     InvertedIndexManager(String indexFolder, Analyzer analyzer) {
         this.analyzer = analyzer;
@@ -63,6 +66,7 @@ public class InvertedIndexManager {
         this.segmentID = 0;
         this.invertedLists = new TreeMap<>(); // use TreeMap so that the map is sorted
         this.documents = new TreeMap<>();
+        this.positions = TreeBasedTable.create();
     }
 
     /**
@@ -116,17 +120,25 @@ public class InvertedIndexManager {
      * Document should live in a in-memory buffer until `flush()` is called to write the segment to disk.
      * @param document
      */
-    
+
     public void addDocument(Document document) {
         List<String> wordList = analyzer.analyze(document.getText());
-        for (String word: wordList) {
+        for (int i = 0; i < wordList.size(); i++) {
+            String word = wordList.get(i);
             if (invertedLists.containsKey(word)) {
                 List<Integer> tmp = invertedLists.get(word);
                 if (!(tmp.get(tmp.size() - 1) == docID)) {
                     tmp.add(docID);
                 }
+                tmp = positions.get(word, docID);
+                if (tmp == null) {
+                    positions.put(word, docID, new LinkedList<>(Arrays.asList(i)));
+                } else {
+                    tmp.add(i);
+                }
             } else {
                 invertedLists.put(word, new LinkedList<>(Arrays.asList(docID)));
+                positions.put(word, docID, new LinkedList<>(Arrays.asList(i)));
             }
         }
         documents.put(docID, document);
@@ -150,11 +162,8 @@ public class InvertedIndexManager {
         }
         docID = 0;
 
-        // store the len(keywords), keywords, page(list), offset(list) (the offset of this page), len(list)
+        // store the len(keywords), keywords, page(list), offset(list) (the offset of this page), len(list) (not include len(position))
         // in segmentXXa, with the first page have the total number of bytes the remaining pages will use
-
-        Path wordsPath = Paths.get(indexFolder + "/segment" + segmentID + "a");
-        PageFileChannel wordsFileChannel = PageFileChannel.createOrOpen(wordsPath);
 
         ByteBuffer wordsBuffer = ByteBuffer.allocate(STORE_PARAMETER * invertedLists.size());
         int offset = 0;
@@ -165,12 +174,15 @@ public class InvertedIndexManager {
             wi.setWordInfo(word, pageID, offset, invertedLists.get(word).size());
             wi.writeOneWord(wordsBuffer);
 
-            offset += invertedLists.get(word).size() * 4;
+            offset += invertedLists.get(word).size() * 2 * 4;
             if (offset >= PageFileChannel.PAGE_SIZE) {
                 pageID += 1;
                 offset -= PageFileChannel.PAGE_SIZE;
             }
         }
+
+        Path wordsPath = Paths.get(indexFolder + "/segment" + segmentID + "a");
+        PageFileChannel wordsFileChannel = PageFileChannel.createOrOpen(wordsPath);
 
         // write the first page
         writeFirstPageOfWord(wordsFileChannel, wordsBuffer.position());
@@ -179,18 +191,20 @@ public class InvertedIndexManager {
         wordsFileChannel.appendAllBytes(wordsBuffer);
         wordsFileChannel.close();
 
-        // store all the lists in segmentXXb
-
-        Path listPath = Paths.get(indexFolder+"/segment" + segmentID + "b");
-        PageFileChannel listFileChannel = PageFileChannel.createOrOpen(listPath);
+        // store the posting lists in segmentXXb (for every docID and len(position list))
 
         ByteBuffer listBuffer = ByteBuffer.allocate(STORE_PARAMETER * invertedLists.size());
         for (String word: invertedLists.keySet()) {
             List<Integer> postingList = invertedLists.get(word);
-            for (int num: postingList) {
-                listBuffer.putInt(num);
+            for (int docID: postingList) {
+                List<Integer> positionList = positions.get(word, docID);
+                listBuffer.putInt(docID);
+                listBuffer.putInt(positionList.size());
             }
         }
+
+        Path listPath = Paths.get(indexFolder+"/segment" + segmentID + "b");
+        PageFileChannel listFileChannel = PageFileChannel.createOrOpen(listPath);
 
         listFileChannel.appendAllBytes(listBuffer);
         listFileChannel.close();
@@ -202,6 +216,7 @@ public class InvertedIndexManager {
         // clear the invertedLists and documents
         this.invertedLists = new TreeMap<>();
         this.documents = new TreeMap<>();
+        this.positions = TreeBasedTable.create();
         segmentID += 1;
 
         // if the num of segment reach DEFAULT_MERGE_THRESHOLD, call merge()
@@ -307,11 +322,13 @@ public class InvertedIndexManager {
         ByteBuffer bb;
         List<Integer> list;
         int pageIDRead;
+        Map<Integer, Integer> map;
 
-        public BufferAndList(ByteBuffer bb, List<Integer> list, int pageIDRead){
+        public BufferAndList(ByteBuffer bb, List<Integer> list, Map<Integer, Integer> map, int pageIDRead){
             this.bb = bb;
             this.list = list;
             this.pageIDRead = pageIDRead;
+            this.map = map;
         }
     }
 
@@ -349,7 +366,8 @@ public class InvertedIndexManager {
 
     BufferAndList getIndexListGivenLen(int segID, ByteBuffer bb, int pageIDRead, int len, boolean addNum, int n) {
         List<Integer> list = new LinkedList<>();
-        int remainInt = (bb.limit() - bb.position()) / 4;
+        Map<Integer, Integer> map = new TreeMap<>();
+        int remainInt = (bb.limit() - bb.position()) / (4 * 2);
         int lSize = len;
 
         // if the posting list is longer than the remaining buffer, first read the buffer,
@@ -362,6 +380,8 @@ public class InvertedIndexManager {
                     docID += n;
                 }
                 list.add(docID);
+                int lenPos = bb.getInt();
+                map.put(docID, lenPos);
             }
             pageIDRead += 1;
             bb = readSegPage(segID, "b", pageIDRead);
@@ -377,8 +397,10 @@ public class InvertedIndexManager {
                 docID += n;
             }
             list.add(docID);
+            int lenPos = bb.getInt();
+            map.put(docID, lenPos);
         }
-        return new BufferAndList(bb, list, pageIDRead);
+        return new BufferAndList(bb, list, map, pageIDRead);
     }
 
     /**
@@ -390,9 +412,9 @@ public class InvertedIndexManager {
      * @param l the posting list
      */
 
-    void writeListBufferByPage(PageFileChannel pfc, ByteBuffer bb, List<Integer> l) {
+    void writeListBufferByPage(PageFileChannel pfc, ByteBuffer bb, List<Integer> l, Map<Integer, Integer> map) {
         int lSize = l.size();
-        int remainInt = (bb.limit() - bb.position()) / 4;
+        int remainInt = (bb.limit() - bb.position()) / (4 * 2);
         int lPos = 0;
 
         // if the posting list is longer than the remaining buffer, first write the buffer,
@@ -400,7 +422,10 @@ public class InvertedIndexManager {
 
         while (lSize / remainInt >= 1) {
             for (int i = 0; i < remainInt; i++, lPos++) {
-                bb.putInt(l.get(lPos));
+                int docID = l.get(lPos);
+                bb.putInt(docID);
+                int lenPos = map.get(docID);
+                bb.putInt(lenPos);
             }
             pfc.appendPage(bb);
             bb.clear();
@@ -410,7 +435,10 @@ public class InvertedIndexManager {
 
         // if the posting list is no longer than the remaining buffer, just write the buffer
         for (int i = 0; i < lSize; i++, lPos++) {
-            bb.putInt(l.get(lPos));
+            int docID = l.get(lPos);
+            bb.putInt(docID);
+            int lenPos = map.get(docID);
+            bb.putInt(lenPos);
         }
     }
 
@@ -466,22 +494,26 @@ public class InvertedIndexManager {
                 BufferAndList bl1 = getIndexListGivenLen(segID1, lb1, pageIDRead1, wi1.len, false, numDoc1);
                 lb1 = bl1.bb;
                 List<Integer> ls1 = bl1.list;
+                Map<Integer, Integer> map1 = bl1.map;
                 pageIDRead1 = bl1.pageIDRead;
+
                 BufferAndList bl2 = getIndexListGivenLen(segID2, lb2, pageIDRead2, wi2.len, true, numDoc1);
                 lb2 = bl2.bb;
                 List<Integer> ls2 = bl2.list;
+                Map<Integer, Integer> map2 = bl2.map;
                 pageIDRead2 = bl2.pageIDRead;
 
                 ls1.addAll(ls2);
+                map1.putAll(map2);
 
                 //write the word info into buffer
                 WordInfo wi = new WordInfo();
                 wi.setWordInfo(wi1.word, pageID, offset, ls1.size());
                 wi.writeOneWord(wordsBuffer);
-                offset += ls1.size() * 4;
+                offset += ls1.size() * (4 * 2);
 
                 //write the list info into buffer, if buffer full, append it into disk
-                writeListBufferByPage(listFileChannel, listBuffer, ls1);
+                writeListBufferByPage(listFileChannel, listBuffer, ls1, map1);
 
                 //check whether bb1 and bb2 can move to the next words
                 if (!wb1.hasRemaining() || !wb2.hasRemaining()) {
@@ -499,14 +531,15 @@ public class InvertedIndexManager {
                 BufferAndList bl2 = getIndexListGivenLen(segID2, lb2, pageIDRead2, wi2.len, true, numDoc1);
                 lb2 = bl2.bb;
                 List<Integer> ls2 = bl2.list;
+                Map<Integer, Integer> map2 = bl2.map;
                 pageIDRead2 = bl2.pageIDRead;
 
                 WordInfo wi = new WordInfo();
                 wi.setWordInfo(wi2.word, pageID, offset, ls2.size());
                 wi.writeOneWord(wordsBuffer);
-                offset += ls2.size() * 4;
+                offset += ls2.size() * (4 * 2);
 
-                writeListBufferByPage(listFileChannel, listBuffer, ls2);
+                writeListBufferByPage(listFileChannel, listBuffer, ls2, map2);
 
                 if (!wb2.hasRemaining()) {
                     if (offset >= PageFileChannel.PAGE_SIZE) {
@@ -517,14 +550,15 @@ public class InvertedIndexManager {
                     BufferAndList bl1 = getIndexListGivenLen(segID1, lb1, pageIDRead1, wi1.len, false, numDoc1);
                     lb1 = bl1.bb;
                     List<Integer> ls1 = bl1.list;
+                    Map<Integer, Integer> map1 = bl1.map;
                     pageIDRead1 = bl1.pageIDRead;
 
                     wi = new WordInfo();
                     wi.setWordInfo(wi1.word, pageID, offset, ls1.size());
                     wi.writeOneWord(wordsBuffer);
-                    offset += ls1.size() * 4;
+                    offset += ls1.size() * (4 * 2);
 
-                    writeListBufferByPage(listFileChannel, listBuffer, ls1);
+                    writeListBufferByPage(listFileChannel, listBuffer, ls1, map1);
                     break;
                 }
                 wi2 = new WordInfo();
@@ -535,14 +569,15 @@ public class InvertedIndexManager {
                 BufferAndList bl1 = getIndexListGivenLen(segID1, lb1, pageIDRead1, wi1.len, false, numDoc1);
                 lb1 = bl1.bb;
                 List<Integer> ls1 = bl1.list;
+                Map<Integer, Integer> map1 = bl1.map;
                 pageIDRead1 = bl1.pageIDRead;
 
                 WordInfo wi = new WordInfo();
                 wi.setWordInfo(wi1.word, pageID, offset, ls1.size());
                 wi.writeOneWord(wordsBuffer);
-                offset += ls1.size() * 4;
+                offset += ls1.size() * (4 * 2);
 
-                writeListBufferByPage(listFileChannel, listBuffer, ls1);
+                writeListBufferByPage(listFileChannel, listBuffer, ls1, map1);
 
                 if (!wb1.hasRemaining()) {
                     if (offset >= PageFileChannel.PAGE_SIZE) {
@@ -553,14 +588,15 @@ public class InvertedIndexManager {
                     BufferAndList bl2 = getIndexListGivenLen(segID2, lb2, pageIDRead2, wi2.len, true, numDoc1);
                     lb2 = bl2.bb;
                     List<Integer> ls2 = bl2.list;
+                    Map<Integer, Integer> map2 = bl2.map;
                     pageIDRead2 = bl2.pageIDRead;
 
                     wi = new WordInfo();
                     wi.setWordInfo(wi2.word, pageID, offset, ls2.size());
                     wi.writeOneWord(wordsBuffer);
-                    offset += ls2.size() * 4;
+                    offset += ls2.size() * (4 * 2);
 
-                    writeListBufferByPage(listFileChannel, listBuffer, ls2);
+                    writeListBufferByPage(listFileChannel, listBuffer, ls2, map2);
 
                     break;
                 }
@@ -587,14 +623,15 @@ public class InvertedIndexManager {
                 BufferAndList bl2 = getIndexListGivenLen(segID2, lb2, pageIDRead2, wi2.len, true, numDoc1);
                 lb2 = bl2.bb;
                 List<Integer> ls2 = bl2.list;
+                Map<Integer, Integer> map2 = bl2.map;
                 pageIDRead2 = bl2.pageIDRead;
 
                 WordInfo wi = new WordInfo();
                 wi.setWordInfo(wi2.word, pageID, offset, ls2.size());
                 wi.writeOneWord(wordsBuffer);
-                offset += ls2.size() * 4;
+                offset += ls2.size() * (4 * 2);
 
-                writeListBufferByPage(listFileChannel, listBuffer, ls2);
+                writeListBufferByPage(listFileChannel, listBuffer, ls2, map2);
             }
         }
 
@@ -611,14 +648,15 @@ public class InvertedIndexManager {
                 BufferAndList bl1 = getIndexListGivenLen(segID1, lb1, pageIDRead1, wi1.len, false, numDoc1);
                 lb1 = bl1.bb;
                 List<Integer> ls1 = bl1.list;
+                Map<Integer, Integer> map1 = bl1.map;
                 pageIDRead1 = bl1.pageIDRead;
 
                 WordInfo wi = new WordInfo();
                 wi.setWordInfo(wi1.word, pageID, offset, ls1.size());
                 wi.writeOneWord(wordsBuffer);
-                offset += ls1.size() * 4;
+                offset += ls1.size() * (4 * 2);
 
-                writeListBufferByPage(listFileChannel, listBuffer, ls1);
+                writeListBufferByPage(listFileChannel, listBuffer, ls1, map1);
             }
         }
 
@@ -1145,6 +1183,7 @@ public class InvertedIndexManager {
             int listLen = wordDic.get(word);
             for (int i = 0; i < listLen; i++) {
                 list.add(listBuffer.getInt());
+                listBuffer.getInt();
             }
             invertedLists.put(word, list);
         }
@@ -1189,7 +1228,167 @@ public class InvertedIndexManager {
      * @return a iterator of top-k ordered documents matching the query
      */
     public Iterator<Pair<Document, Double>> searchTfIdf(List<String> keywords, Integer topK) {
-        throw new UnsupportedOperationException();
+        // analyze the query
+        String q = String.join(" ", keywords);
+        List<String> words = analyzer.analyze(q);
+        Map<String, Double> IDF = new HashMap<>();
+        Map<String, Integer> queryTF = new HashMap<>();
+
+        // In the first pass, access each segment to calculate the IDF's of the query keywords
+        for (String w : words) {
+            if (!IDF.containsKey(w)) {
+                IDF.put(w, computeIDF(w));
+            }
+
+            if(queryTF.containsKey(w))
+                queryTF.put(w, queryTF.get(w) + 1);
+            else
+                queryTF.put(w, 1);
+        }
+
+        Set<String> wordSet = new HashSet<>();
+        wordSet.addAll(words);
+//        System.out.println("IDF:"+IDF);
+//        System.out.println("queryTF:"+queryTF);
+
+//        PriorityQueue<Pair<Integer, Integer>> pq = new PriorityQueue<>(score.size(), new Comparator<Pair<Integer, Integer>>() {
+//            @Override
+//            public int compare(Pair<Integer, Integer> p1, Pair<Integer, Integer> p2) {
+//                return score.get(p1).compareTo(score.get(p2));
+//            }
+//        });
+//        PriorityQueue<Map.Entry<Pair<Integer, Integer>, Double>> pq = new PriorityQueue<Map.Entry<Pair<Integer, Integer>,Double>>(
+//                topK, new Comparator<Map.Entry<Pair<Integer, Integer>, Double>>() {
+//            @Override
+//            public int compare(Map.Entry<Pair<Integer, Integer>, Double> d0,
+//                               Map.Entry<Pair<Integer, Integer>, Double> d1) {
+//                return d0.getValue().compareTo(d1.getValue());
+//            }
+//        });
+        PriorityQueue<Map.Entry<Pair<Integer, Integer>, Double>> pq = new PriorityQueue<>(
+                (a,b) -> a.getValue().compareTo(b.getValue())
+        );
+
+        // In the second pass
+        int segNum = getNumSegments();
+        for (int i = 0; i < segNum; i++) {
+            Map<Pair<Integer, Integer>, Double> score = new HashMap<>();
+            Map<Pair<Integer, Integer>, Double> dotProductAccumulator = new HashMap<>();
+            Map<Pair<Integer, Integer>, Double> vectorLengthAccumulator = new HashMap<>();
+
+            // read segmentXXa
+            Path wordsPath = Paths.get(indexFolder + "/segment" + i + "a");
+            PageFileChannel wordsFileChannel = PageFileChannel.createOrOpen(wordsPath);
+            Path listPath = Paths.get(indexFolder + "/segment" + i + "b");
+            PageFileChannel listFileChannel = PageFileChannel.createOrOpen(listPath);
+
+            // search the dictionary for the token, get the posting list and TF for each document
+            for (String w: wordSet) {
+                WordInfo wi = findWord(wordsFileChannel, w);
+
+                // if there are no keyword in dictionary, continue the next loop
+                if (wi.word == null) {
+                    continue;
+                }
+
+                ByteBuffer listBuffer = listFileChannel.readPage(wi.pageID);
+                listBuffer.position(wi.offset);
+                BufferAndList bl = getIndexListGivenLen(i, listBuffer, wi.pageID, wi.len, false, 0);
+                Map<Integer,Integer> docMap = bl.map;
+
+                // for each docID on the postingList of w, compute tfidf
+                for (int docID: docMap.keySet()) {
+                    double tfIdf = docMap.get(docID) * IDF.get(w);
+                    double queryTfIdf = queryTF.get(w) * IDF.get(w);
+                    System.out.println("doc:"+i+","+docID+";word:"+w+";tfIdf"+tfIdf+";queryTfIdf"+queryTfIdf);
+                    Pair<Integer, Integer> doc = new Pair<>(i, docID);
+
+                    if (dotProductAccumulator.containsKey(doc)) {
+                        dotProductAccumulator.put(doc, dotProductAccumulator.get(doc) + tfIdf * queryTfIdf);
+                        vectorLengthAccumulator.put(doc, vectorLengthAccumulator.get(doc) + tfIdf * tfIdf);
+                    } else {
+                        dotProductAccumulator.put(doc, tfIdf * queryTfIdf);
+                        vectorLengthAccumulator.put(doc, tfIdf * tfIdf);
+                    }
+                }
+            }
+
+            wordsFileChannel.close();
+            listFileChannel.close();
+            // for each docID in this segment, compute the score and add it to priority queue
+            for (Pair<Integer, Integer> d: dotProductAccumulator.keySet()) {
+                if (vectorLengthAccumulator.get(d) != 0.0) {
+                    score.put(d, (double) dotProductAccumulator.get(d) / Math.sqrt(vectorLengthAccumulator.get(d)));
+                }
+//                pq.add(d);
+//                if (topK != null) {
+//                    if (pq.size() > topK)
+//                        pq.poll();
+//                }
+            }
+            pq.addAll(score.entrySet());
+            if (topK != null) {
+                while (pq.size() > topK)
+                    pq.poll();
+            }
+//            System.out.println(score);
+//            System.out.println(pq);
+        }
+
+        // based on <SegmentID, LocalDocID> retrieve document
+        List<Pair<Document, Double>> result = new ArrayList<>();
+        int pqSize = pq.size();
+        for (int i = 0; i < pqSize; i++) {
+            Map.Entry<Pair<Integer, Integer>, Double> tmp = pq.poll();
+            Pair<Integer, Integer> doc = tmp.getKey();
+            result.add(0, new Pair<>(getDoc(doc), tmp.getValue()));
+        }
+        System.out.println(result);
+        return result.iterator();
+    }
+
+    /**
+     * Find a word in the dictionary, if can not find, return an empty WordInfo
+     */
+    private WordInfo findWord (PageFileChannel wordsFileChannel, String w) {
+        ByteBuffer wordsBuffer = wordsFileChannel.readAllPages();
+        readFirstPageOfWord(wordsBuffer);
+
+        WordInfo wi = new WordInfo();
+        while (wordsBuffer.hasRemaining()) {
+            wi.readOneWord(wordsBuffer);
+            if (w.equals(wi.word)) {
+                return wi;
+            }
+        }
+        return new WordInfo();
+    }
+
+    /**
+     * Retrieve document based on <SegmentID, LocalDocID>
+     */
+    private Document getDoc (Pair<Integer, Integer> doc) {
+        int segmentID = doc.getLeft();
+        int localDocID = doc.getRight();
+        DocumentStore ds = MapdbDocStore.createOrOpen(indexFolder + "/segment" + segmentID + ".db");
+        Document d = ds.getDocument(localDocID);
+        ds.close();
+        return d;
+    }
+
+    /**
+     * Returns the IDF of the token
+     */
+    private double computeIDF(String token) {
+        int segNum = getNumSegments();
+        int N = 0;
+        int freq = 0;
+        for (int i = 0; i < segNum; i++) {
+            N += getNumDocuments(i);
+            freq += getDocumentFrequency(i, token);
+        }
+        double result = (double) N / freq;
+        return Math.log(result);
     }
 
     /**
@@ -1225,5 +1424,38 @@ public class InvertedIndexManager {
             }
         }
         return lenList;
+    }
+
+    public static void main(String[] args) {
+        Map<String, Double> score = new HashMap<>();
+        score.put("a",0.83);
+        score.put("b",0.28);
+        score.put("c",0.81);
+
+        Map<String, Double> score2 = new HashMap<>();
+        score2.put("d",0.86);
+        PriorityQueue<Map.Entry<String, Double>> pq = new PriorityQueue<>(
+                (a,b) -> b.getValue().compareTo(a.getValue())
+        );
+//        PriorityQueue<String> pq = new PriorityQueue<String>(3, new Comparator<String>() {
+//
+//            @Override
+//            public int compare(String arg0, String arg1) {
+//                return score.get(arg0).compareTo(score.get(arg1));
+//            }
+//        });
+        pq.addAll(score.entrySet());
+        pq.addAll(score2.entrySet());
+
+        System.out.println(pq);
+//        System.out.println();
+//        PriorityQueue<Pair<Integer, Integer>> pq = new PriorityQueue<>(new Comparator<Pair<Integer, Integer>>() {
+//            @Override
+//            public int compare(Pair<Integer, Integer> p1, Pair<Integer, Integer> p2) {
+//                if (score.get(p1) < score.get(p2)) return -1;
+//                if (score.get(p1) > score.get(p2)) return 1;
+//                return 0;
+//            }
+//        });
     }
 }
