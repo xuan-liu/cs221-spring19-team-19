@@ -1304,7 +1304,7 @@ public class PositionalIndexManager extends InvertedIndexManager {
                 for (int docID: docMap.keySet()) {
                     double tfIdf = docMap.get(docID) * IDF.get(w);
                     double queryTfIdf = queryTF.get(w) * IDF.get(w);
-//                    System.out.println("doc:"+i+","+docID+";word:"+w+";tfIdf"+tfIdf+";queryTfIdf"+queryTfIdf);
+                    System.out.println("doc:"+i+","+docID+";word:"+w+";tfIdf"+tfIdf+";queryTfIdf"+queryTfIdf);
                     Pair<Integer, Integer> doc = new Pair<>(i, docID);
 
                     if (dotProductAccumulator.containsKey(doc)) {
@@ -1323,9 +1323,11 @@ public class PositionalIndexManager extends InvertedIndexManager {
             // for each docID in this segment, compute the score and add it to priority queue
             for (Pair<Integer, Integer> d: dotProductAccumulator.keySet()) {
                 if (vectorLengthAccumulator.get(d) != 0.0) {
+//                    System.out.println(d+": " + dotProductAccumulator.get(d)+" , "+Math.sqrt(vectorLengthAccumulator.get(d)));
                     score.put(d, (double) dotProductAccumulator.get(d) / Math.sqrt(vectorLengthAccumulator.get(d)));
                 }
             }
+//            System.out.println(score);
             pq.addAll(score.entrySet());
             if (topK != null) {
                 while (pq.size() > topK)
