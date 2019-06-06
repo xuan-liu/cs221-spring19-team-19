@@ -39,8 +39,7 @@ public class Team11TfIdfTest {
     public void before() {
         analyzer = new ComposableAnalyzer(new PunctuationTokenizer(), new PorterStemmer());
         compressor = new DeltaVarLenCompressor();
-//        index = InvertedIndexManager.createOrOpenPositional(indexPath, analyzer, compressor);
-        index = InvertedIndexManager.createOrOpen(indexPath, analyzer);
+        index = InvertedIndexManager.createOrOpenPositional(indexPath, analyzer, compressor);
     }
 
     @After

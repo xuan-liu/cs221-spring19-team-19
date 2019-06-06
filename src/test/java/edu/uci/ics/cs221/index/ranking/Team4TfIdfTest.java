@@ -52,7 +52,7 @@ public class Team4TfIdfTest {
         this.dvlIndexManager.addDocument(doc3);
         // Do flush operation
         this.dvlIndexManager.flush();
-        System.out.println(dvlIndexManager.getIndexSegmentPositional(0));
+
         assertEquals(this.dvlIndexManager.getDocumentFrequency(0, "dog"), 2);
         assertEquals(this.dvlIndexManager.getDocumentFrequency(0, "appl"), 3);
         assertEquals(this.dvlIndexManager.getDocumentFrequency(0, "people"), 0);

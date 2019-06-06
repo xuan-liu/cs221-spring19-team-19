@@ -30,12 +30,9 @@ public class Team8TfIdfTest {
 
     @Before
     public void init(){
-//        indexmanger = InvertedIndexManager.createOrOpenPositional(path,
-//                new ComposableAnalyzer(new PunctuationTokenizer(), new PorterStemmer()),
-//                new DeltaVarLenCompressor());
-
-        indexmanger = InvertedIndexManager.createOrOpen(path,
-                new ComposableAnalyzer(new PunctuationTokenizer(), new PorterStemmer()));
+        indexmanger = InvertedIndexManager.createOrOpenPositional(path,
+                new ComposableAnalyzer(new PunctuationTokenizer(), new PorterStemmer()),
+                new DeltaVarLenCompressor());
 
         documents = new Document[] {
                 new Document("An apple a day keeps a doctor away"),

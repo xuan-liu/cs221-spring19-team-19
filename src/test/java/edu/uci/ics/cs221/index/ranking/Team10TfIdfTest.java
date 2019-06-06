@@ -23,11 +23,9 @@ public class Team10TfIdfTest {
     private static List<String> docs;
     @Test
     public void test1(){
-//        iim = InvertedIndexManager.createOrOpenPositional(path,
-//                new ComposableAnalyzer(new PunctuationTokenizer(), new PorterStemmer()),
-//                new DeltaVarLenCompressor());
-        iim = InvertedIndexManager.createOrOpen(path,
-                new ComposableAnalyzer(new PunctuationTokenizer(), new PorterStemmer()));
+        iim = InvertedIndexManager.createOrOpenPositional(path,
+                new ComposableAnalyzer(new PunctuationTokenizer(), new PorterStemmer()),
+                new DeltaVarLenCompressor());
         Document doc1 = new Document("test search project");
         Document doc2 = new Document("search engine is our project");
         Document doc3 = new Document("we need to finish the project");
