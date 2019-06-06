@@ -117,6 +117,7 @@ public class Team17searchTfIdfTest {
         expected.add(doc1.getText());
         expected.add(doc2.getText());
 
+        System.out.println("hh");
         while(res.hasNext()){
             count ++;
             //actual.add(res.next().getLeft().getText());

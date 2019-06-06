@@ -32,8 +32,7 @@ public class Team19TfIdfTest {
 
     @Before
     public void setup() {
-        iim = InvertedIndexManager.createOrOpen(file, an);
-//        iim = InvertedIndexManager.createOrOpenPositional(file, an, cp);
+        iim = InvertedIndexManager.createOrOpenPositional(file, an, cp);
         InvertedIndexManager.DEFAULT_FLUSH_THRESHOLD = 3;
     }
 

@@ -16,6 +16,29 @@ import java.util.*;
 import java.nio.BufferUnderflowException;
 import java.io.ByteArrayOutputStream;
 
+/**
+ * This class manages an disk-based positional index and all the documents in the positional index.
+ *
+ * On disk, there are 4 files per segment: docStore, dictionary, and invertedLists, positionLists, offsetOfPositionList.
+ * PositionLists and offsetOfPositionList will be compressed.
+ *
+ * Dictionary is in “segmentXXa”. The first page has one integer, which represents the total number of bytes the remaining
+ * pages will use. The remaining pages store word information for each keyword — length(keyword), keyword, offset(posting list),
+ * length(posting list), offset(offsetOfPositionList), lengthOfByte(offsetOfPositionList).
+ *
+ * InvertedLists is in “segmentXXb”. For each keyword, it stores — docID1, length(position list of docID1), docID2,
+ * length(position list of docID2) ……
+ *
+ * OffsetOfPositionList is in “segmentXXd”. For each keyword, it stores — offset(position list of docID1), offset(position list of docID2)
+ * … offset(position list of docIDn), endOffset(position list of docIDn).
+ *
+ * PositionLists is in “segmentXXc”. For each keyword, it stores — position list of docID1, position list of docID2 ……
+ *
+ * DocStore is in “segmentXX.db”.
+ * 
+ * Please refer to the project 3 wiki page for implementation guidelines.
+ */
+
 public class PositionalIndexManager extends InvertedIndexManager {
     private Compressor compressor;
 
@@ -55,7 +78,10 @@ public class PositionalIndexManager extends InvertedIndexManager {
             List<Integer> offPos = new ArrayList<>();
 
             for (int docID: postingList) {
+                // store the posting lists and length(position list) in segmentXXb
                 List<Integer> positionList = positions.get(word, docID);
+                listBuffer.putInt(docID);
+                listBuffer.putInt(positionList.size());
 
                 byte[] positionListByte = compressor.encode(positionList);
                 positionBuffer.put(positionListByte);
@@ -66,20 +92,18 @@ public class PositionalIndexManager extends InvertedIndexManager {
 
             offPos.add(offsetPos); // add the end offset
 
-            // store the posting lists in segmentXXb, store the according "offset (position list) + end offset" in segmentXXd
-            byte[] docIDByte = compressor.encode(postingList);
-            listBuffer.put(docIDByte);
+            //  store the according "offset (position list) + end offset" in segmentXXd
             byte[] offPosByte = compressor.encode(offPos);
             offPosBuffer.put(offPosByte);
 
-            // store the len(keywords), keywords, offset(list), lenOfByte(list), offset(offsetPos), lenOfByte(offsetPos)
+            // store the len(keywords), keywords, offset(list), length(list), offset(offsetPos), lenOfByte(offsetPos)
             // in segmentXXa, with the first page have the total number of bytes the remaining pages will use
 
             PositionalWordInfo wi = new PositionalWordInfo();
-            wi.setWordInfo(word, offsetB, docIDByte.length, offsetD, offPosByte.length);
+            wi.setWordInfo(word, offsetB, postingList.size(), offsetD, offPosByte.length);
             wi.writeOneWord(wordsBuffer);
 
-            offsetB += docIDByte.length;
+            offsetB += postingList.size() * 2 * 4;
             offsetD += offPosByte.length;
         }
 
@@ -328,6 +352,7 @@ public class PositionalIndexManager extends InvertedIndexManager {
 
     @Override
     void mergeInvertedLists(int segID1, int segID2, int numDoc1) {
+//        System.out.println("merge:"+segID1+" and "+segID2);
         // read two segmentXXa into two buffer and delete these two segmentXXa
         Path path = Paths.get(indexFolder + "/segment" + segID1 + "a");
         PageFileChannel pfc = PageFileChannel.createOrOpen(path);
@@ -380,27 +405,29 @@ public class PositionalIndexManager extends InvertedIndexManager {
         PageFileChannel positionFileChannel = PageFileChannel.createOrOpen(path);
 
         while (true) {
-
+//            System.out.println("word1: "+wi1.word+" ,word2: "+wi2.word);
             if (wi1.word.equals(wi2.word)) {
                 // add them to the dictionary, find their posting lists and add them to the disk
                 //find their position list and add them to the disk, move both bb1 and bb2 to the next words
 
                 //get the list according to the word, for list 2, all docID add numDoc1
-                BufferAndByte bl1 = readListBufferByPage(segID1, lb1, pageIDRead1, wi1.lenB, "b");
+                BufferAndList bl1 = getIndexListGivenLen(segID1, lb1, pageIDRead1, wi1.lenB, false, numDoc1);
                 lb1 = bl1.bb;
-                byte[] ls1 = bl1.b;
+                List<Integer> ls1 = bl1.list;
+                Map<Integer, Integer> map1 = bl1.map;
                 pageIDRead1 = bl1.pageIDRead;
 
-                BufferAndByte bl2 = readListBufferByPage(segID2, lb2, pageIDRead2, wi2.lenB, "b");
+                BufferAndList bl2 = getIndexListGivenLen(segID2, lb2, pageIDRead2, wi2.lenB, true, numDoc1);
                 lb2 = bl2.bb;
-                byte[] ls2tmp = bl2.b;
+                List<Integer> ls2 = bl2.list;
+                Map<Integer, Integer> map2 = bl2.map;
                 pageIDRead2 = bl2.pageIDRead;
 
-                byte[] ls2 = addNumList(ls2tmp, numDoc1);
-                byte[] lsNew = joinTwoByte(ls1, ls2);
+                ls1.addAll(ls2);
+                map1.putAll(map2);
 
                 //write the list info into buffer, if buffer full, append it into disk
-                writeListBufferByPage(listFileChannel, listBuffer, lsNew);
+                writeListBufferByPage(listFileChannel, listBuffer, ls1, map1);
 
                 // read the offPos buffer, get the offset. write the offPos into buffer
                 BufferAndByte ol1 = readListBufferByPage(segID1, ob1, pageIDReadOff1, wi1.lenD, "d");
@@ -431,9 +458,9 @@ public class PositionalIndexManager extends InvertedIndexManager {
 
                 //write the word info into buffer
                 PositionalWordInfo wi = new PositionalWordInfo();
-                wi.setWordInfo(wi1.word, offsetB, lsNew.length, offsetD, osNew.length);
+                wi.setWordInfo(wi1.word, offsetB, ls1.size(), offsetD, osNew.length);
                 wi.writeOneWord(wordsBuffer);
-                offsetB += lsNew.length;
+                offsetB += ls1.size()* (4 * 2);
                 offsetD += osNew.length;
 
                 //check whether bb1 and bb2 can move to the next words
@@ -450,14 +477,14 @@ public class PositionalIndexManager extends InvertedIndexManager {
             else if (wi1.word.compareTo(wi2.word) > 0) {
                 // add key2 and its list to the disk, move bb2 to the next word
                 //get the list according to the word, for list 2, all docID add numDoc1
-                BufferAndByte bl2 = readListBufferByPage(segID2, lb2, pageIDRead2, wi2.lenB, "b");
+                BufferAndList bl2 = getIndexListGivenLen(segID2, lb2, pageIDRead2, wi2.lenB, true, numDoc1);
                 lb2 = bl2.bb;
-                byte[] ls2tmp = bl2.b;
+                List<Integer> ls2 = bl2.list;
+                Map<Integer, Integer> map2 = bl2.map;
                 pageIDRead2 = bl2.pageIDRead;
-                byte[] ls2 = addNumList(ls2tmp, numDoc1);
 
                 //write the list info into buffer, if buffer full, append it into disk
-                writeListBufferByPage(listFileChannel, listBuffer, ls2);
+                writeListBufferByPage(listFileChannel, listBuffer, ls2, map2);
 
                 // read the offPos buffer, get the offset. write the offPos into buffer
                 BufferAndByte ol2 = readListBufferByPage(segID2, ob2, pageIDReadOff2, wi2.lenD, "d");
@@ -478,19 +505,20 @@ public class PositionalIndexManager extends InvertedIndexManager {
 
                 //write the word info into buffer
                 PositionalWordInfo wi = new PositionalWordInfo();
-                wi.setWordInfo(wi2.word, offsetB, ls2.length, offsetD, osNew.length);
+                wi.setWordInfo(wi2.word, offsetB, ls2.size(), offsetD, osNew.length);
                 wi.writeOneWord(wordsBuffer);
-                offsetB += ls2.length;
+                offsetB += ls2.size() * (4 * 2);
                 offsetD += osNew.length;
 
                 if (!wb2.hasRemaining()) {
-                    BufferAndByte bl1 = readListBufferByPage(segID1, lb1, pageIDRead1, wi1.lenB, "b");
+                    BufferAndList bl1 = getIndexListGivenLen(segID1, lb1, pageIDRead1, wi1.lenB, false, numDoc1);
                     lb1 = bl1.bb;
-                    byte[] ls1 = bl1.b;
+                    List<Integer> ls1 = bl1.list;
+                    Map<Integer, Integer> map1 = bl1.map;
                     pageIDRead1 = bl1.pageIDRead;
 
                     //write the list info into buffer, if buffer full, append it into disk
-                    writeListBufferByPage(listFileChannel, listBuffer, ls1);
+                    writeListBufferByPage(listFileChannel, listBuffer, ls1, map1);
 
                     // read the offPos buffer, get the offset. write the offPos into buffer
                     BufferAndByte ol1 = readListBufferByPage(segID1, ob1, pageIDReadOff1, wi1.lenD, "d");
@@ -511,9 +539,9 @@ public class PositionalIndexManager extends InvertedIndexManager {
 
                     //write the word info into buffer
                     wi = new PositionalWordInfo();
-                    wi.setWordInfo(wi1.word, offsetB, ls1.length, offsetD, osNew.length);
+                    wi.setWordInfo(wi1.word, offsetB, ls1.size(), offsetD, osNew.length);
                     wi.writeOneWord(wordsBuffer);
-                    offsetB += ls1.length;
+                    offsetB += ls1.size() * (4 * 2);
                     offsetD += osNew.length;
 
                     break;
@@ -523,13 +551,14 @@ public class PositionalIndexManager extends InvertedIndexManager {
             }
             else {
                 //add key1 and its list to the disk, move bb1 to the next word
-                BufferAndByte bl1 = readListBufferByPage(segID1, lb1, pageIDRead1, wi1.lenB, "b");
+                BufferAndList bl1 = getIndexListGivenLen(segID1, lb1, pageIDRead1, wi1.lenB, false, numDoc1);
                 lb1 = bl1.bb;
-                byte[] ls1 = bl1.b;
+                List<Integer> ls1 = bl1.list;
+                Map<Integer, Integer> map1 = bl1.map;
                 pageIDRead1 = bl1.pageIDRead;
 
                 //write the list info into buffer, if buffer full, append it into disk
-                writeListBufferByPage(listFileChannel, listBuffer, ls1);
+                writeListBufferByPage(listFileChannel, listBuffer, ls1, map1);
 
                 // read the offPos buffer, get the offset. write the offPos into buffer
                 BufferAndByte ol1 = readListBufferByPage(segID1, ob1, pageIDReadOff1, wi1.lenD, "d");
@@ -550,20 +579,20 @@ public class PositionalIndexManager extends InvertedIndexManager {
 
                 //write the word info into buffer
                 PositionalWordInfo wi = new PositionalWordInfo();
-                wi.setWordInfo(wi1.word, offsetB, ls1.length, offsetD, osNew.length);
+                wi.setWordInfo(wi1.word, offsetB, ls1.size(), offsetD, osNew.length);
                 wi.writeOneWord(wordsBuffer);
-                offsetB += ls1.length;
+                offsetB += ls1.size() * (4 * 2);
                 offsetD += osNew.length;
 
                 if (!wb1.hasRemaining()) {
-                    BufferAndByte bl2 = readListBufferByPage(segID2, lb2, pageIDRead2, wi2.lenB, "b");
+                    BufferAndList bl2 = getIndexListGivenLen(segID2, lb2, pageIDRead2, wi2.lenB, true, numDoc1);
                     lb2 = bl2.bb;
-                    byte[] ls2tmp = bl2.b;
+                    List<Integer> ls2 = bl2.list;
+                    Map<Integer, Integer> map2 = bl2.map;
                     pageIDRead2 = bl2.pageIDRead;
-                    byte[] ls2 = addNumList(ls2tmp, numDoc1);
 
                     //write the list info into buffer, if buffer full, append it into disk
-                    writeListBufferByPage(listFileChannel, listBuffer, ls2);
+                    writeListBufferByPage(listFileChannel, listBuffer, ls2, map2);
 
                     // read the offPos buffer, get the offset. write the offPos into buffer
                     BufferAndByte ol2 = readListBufferByPage(segID2, ob2, pageIDReadOff2, wi2.lenD, "d");
@@ -584,9 +613,9 @@ public class PositionalIndexManager extends InvertedIndexManager {
 
                     //write the word info into buffer
                     wi = new PositionalWordInfo();
-                    wi.setWordInfo(wi2.word, offsetB, ls2.length, offsetD, osNew.length);
+                    wi.setWordInfo(wi2.word, offsetB, ls2.size(), offsetD, osNew.length);
                     wi.writeOneWord(wordsBuffer);
-                    offsetB += ls2.length;
+                    offsetB += ls2.size() * (4 * 2);
                     offsetD += osNew.length;
 
                     break;
@@ -602,14 +631,14 @@ public class PositionalIndexManager extends InvertedIndexManager {
                 wi2.readOneWord(wb2);
 
                 //get the list according to the word, for list 2, all docID add numDoc1
-                BufferAndByte bl2 = readListBufferByPage(segID2, lb2, pageIDRead2, wi2.lenB, "b");
+                BufferAndList bl2 = getIndexListGivenLen(segID2, lb2, pageIDRead2, wi2.lenB, true, numDoc1);
                 lb2 = bl2.bb;
-                byte[] ls2tmp = bl2.b;
+                List<Integer> ls2 = bl2.list;
+                Map<Integer, Integer> map2 = bl2.map;
                 pageIDRead2 = bl2.pageIDRead;
-                byte[] ls2 = addNumList(ls2tmp, numDoc1);
 
                 //write the list info into buffer, if buffer full, append it into disk
-                writeListBufferByPage(listFileChannel, listBuffer, ls2);
+                writeListBufferByPage(listFileChannel, listBuffer, ls2, map2);
 
                 // read the offPos buffer, get the offset. write the offPos into buffer
                 BufferAndByte ol2 = readListBufferByPage(segID2, ob2, pageIDReadOff2, wi2.lenD, "d");
@@ -630,9 +659,9 @@ public class PositionalIndexManager extends InvertedIndexManager {
 
                 //write the word info into buffer
                 PositionalWordInfo wi = new PositionalWordInfo();
-                wi.setWordInfo(wi2.word, offsetB, ls2.length, offsetD, osNew.length);
+                wi.setWordInfo(wi2.word, offsetB, ls2.size(), offsetD, osNew.length);
                 wi.writeOneWord(wordsBuffer);
-                offsetB += ls2.length;
+                offsetB += ls2.size() * (4 * 2);
                 offsetD += osNew.length;
             }
         }
@@ -642,13 +671,14 @@ public class PositionalIndexManager extends InvertedIndexManager {
                 wi1 = new PositionalWordInfo();
                 wi1.readOneWord(wb1);
 
-                BufferAndByte bl1 = readListBufferByPage(segID1, lb1, pageIDRead1, wi1.lenB, "b");
+                BufferAndList bl1 = getIndexListGivenLen(segID1, lb1, pageIDRead1, wi1.lenB, false, numDoc1);
                 lb1 = bl1.bb;
-                byte[] ls1 = bl1.b;
+                List<Integer> ls1 = bl1.list;
+                Map<Integer, Integer> map1 = bl1.map;
                 pageIDRead1 = bl1.pageIDRead;
 
                 //write the list info into buffer, if buffer full, append it into disk
-                writeListBufferByPage(listFileChannel, listBuffer, ls1);
+                writeListBufferByPage(listFileChannel, listBuffer, ls1, map1);
 
                 // read the offPos buffer, get the offset. write the offPos into buffer
                 BufferAndByte ol1 = readListBufferByPage(segID1, ob1, pageIDReadOff1, wi1.lenD, "d");
@@ -669,9 +699,9 @@ public class PositionalIndexManager extends InvertedIndexManager {
 
                 //write the word info into buffer
                 PositionalWordInfo wi = new PositionalWordInfo();
-                wi.setWordInfo(wi1.word, offsetB, ls1.length, offsetD, osNew.length);
+                wi.setWordInfo(wi1.word, offsetB, ls1.size(), offsetD, osNew.length);
                 wi.writeOneWord(wordsBuffer);
-                offsetB += ls1.length;
+                offsetB += ls1.size() * (4 * 2);
                 offsetD += osNew.length;
             }
         }
@@ -1133,12 +1163,11 @@ public class PositionalIndexManager extends InvertedIndexManager {
         wordsFileChannel.close();
         readFirstPageOfWord(wordsBuffer);
 
-        // based on remaining page, build map<String, List<Integer>> in which key is keyword, value is lenOfByte(list),
+        // based on remaining page, build map<String, List<Integer>> in which key is keyword, value is length(list),
         // lenOfByte(offsetPos list)
         PositionalWordInfo wi = new PositionalWordInfo();
         while (wordsBuffer.hasRemaining()) {
             wi.readOneWord(wordsBuffer);
-            System.out.println(wi.word);
             wordDic.put(wi.word, Arrays.asList(wi.lenB, wi.lenD));
         }
 
@@ -1163,9 +1192,11 @@ public class PositionalIndexManager extends InvertedIndexManager {
 
         for (String word: wordDic.keySet()) {
             int listLen = wordDic.get(word).get(0);
-            byte[] listb = new byte[listLen];
-            listBuffer.get(listb, 0, listLen);
-            List<Integer> list = compressor.decode(listb, 0, listb.length);
+            List<Integer> list = new ArrayList<>();
+            for (int i = 0; i < listLen; i++) {
+                list.add(listBuffer.getInt());
+                listBuffer.getInt();
+            }
             invertedLists.put(word, list);
 
             int offPosLen = wordDic.get(word).get(1);
@@ -1193,6 +1224,145 @@ public class PositionalIndexManager extends InvertedIndexManager {
         return new PositionalIndexSegmentForTest(invertedLists, documents, positions);
     }
 
+
+    /**
+     * Performs top-K ranked search using TF-IDF.
+     * Returns an iterator that returns the top K documents with highest TF-IDF scores.
+     *
+     * Each element is a pair of <Document, Double (TF-IDF Score)>.
+     *
+     * If parameter `topK` is null, then returns all the matching documents.
+     *
+     * Unlike Boolean Query and Phrase Query where order of the documents doesn't matter,
+     * for ranked search, order of the document returned by the iterator matters.
+     *
+     * @param keywords, a list of keywords in the query
+     * @param topK, number of top documents weighted by TF-IDF, all documents if topK is null
+     * @return a iterator of top-k ordered documents matching the query
+     */
+    @Override
+    public Iterator<Pair<Document, Double>> searchTfIdf(List<String> keywords, Integer topK) {
+        // analyze the query
+        String q = String.join(" ", keywords);
+        List<String> words = analyzer.analyze(q);
+        Map<String, Double> IDF = new HashMap<>();
+        Map<String, Integer> queryTF = new HashMap<>();
+        Set<String> wordSet = new HashSet<>();
+        wordSet.addAll(words);
+
+        // If there are only one word in query, set IDF to 1, queryTF to 1
+        if (wordSet.size() == 1) {
+            IDF.put(words.get(0), 1.0);
+            queryTF.put(words.get(0), 1);
+        } else {
+            // In the first pass, access each segment to calculate the IDF of the query keywords
+            for (String w : words) {
+                if (!IDF.containsKey(w)) {
+                    IDF.put(w, computeIDF(w));
+                }
+
+                if(queryTF.containsKey(w))
+                    queryTF.put(w, queryTF.get(w) + 1);
+                else
+                    queryTF.put(w, 1);
+            }
+        }
+
+        PriorityQueue<Map.Entry<Pair<Integer, Integer>, Double>> pq = new PriorityQueue<>(
+                (a,b) -> a.getValue().compareTo(b.getValue())
+        );
+
+        // In the second pass
+        int segNum = getNumSegments();
+        for (int i = 0; i < segNum; i++) {
+            Map<Pair<Integer, Integer>, Double> score = new HashMap<>();
+            Map<Pair<Integer, Integer>, Double> dotProductAccumulator = new HashMap<>();
+            Map<Pair<Integer, Integer>, Double> vectorLengthAccumulator = new HashMap<>();
+
+            // read segmentXXa
+            Path wordsPath = Paths.get(indexFolder + "/segment" + i + "a");
+            PageFileChannel wordsFileChannel = PageFileChannel.createOrOpen(wordsPath);
+            Path listPath = Paths.get(indexFolder + "/segment" + i + "b");
+            PageFileChannel listFileChannel = PageFileChannel.createOrOpen(listPath);
+
+            // search the dictionary for the token, get the posting list and TF for each document
+            for (String w: wordSet) {
+                PositionalWordInfo wi = findPositionalWord(wordsFileChannel, w);
+
+                // if there are no keyword in dictionary, continue the next loop
+                if (wi.word == null) {
+                    continue;
+                }
+
+                int page = wi.offsetB/ PageFileChannel.PAGE_SIZE;
+                ByteBuffer listBuffer = listFileChannel.readPage(page);
+                listBuffer.position(wi.offsetB);
+                BufferAndList bl = getIndexListGivenLen(i, listBuffer, page, wi.lenB, false, 0);
+                Map<Integer,Integer> docMap = bl.map;
+
+                // for each docID on the postingList of w, compute tfidf
+                for (int docID: docMap.keySet()) {
+                    double tfIdf = docMap.get(docID) * IDF.get(w);
+                    double queryTfIdf = queryTF.get(w) * IDF.get(w);
+//                    System.out.println("doc:"+i+","+docID+";word:"+w+";tfIdf"+tfIdf+";queryTfIdf"+queryTfIdf);
+                    Pair<Integer, Integer> doc = new Pair<>(i, docID);
+
+                    if (dotProductAccumulator.containsKey(doc)) {
+                        dotProductAccumulator.put(doc, dotProductAccumulator.get(doc) + tfIdf * queryTfIdf);
+                        vectorLengthAccumulator.put(doc, vectorLengthAccumulator.get(doc) + tfIdf * tfIdf);
+                    } else {
+                        dotProductAccumulator.put(doc, tfIdf * queryTfIdf);
+                        vectorLengthAccumulator.put(doc, tfIdf * tfIdf);
+                    }
+                }
+            }
+
+            wordsFileChannel.close();
+            listFileChannel.close();
+
+            // for each docID in this segment, compute the score and add it to priority queue
+            for (Pair<Integer, Integer> d: dotProductAccumulator.keySet()) {
+                if (vectorLengthAccumulator.get(d) != 0.0) {
+                    score.put(d, (double) dotProductAccumulator.get(d) / Math.sqrt(vectorLengthAccumulator.get(d)));
+                }
+            }
+            pq.addAll(score.entrySet());
+            if (topK != null) {
+                while (pq.size() > topK)
+                    pq.poll();
+            }
+        }
+
+        // based on <SegmentID, LocalDocID> retrieve document
+        List<Pair<Document, Double>> result = new ArrayList<>();
+        int pqSize = pq.size();
+        for (int i = 0; i < pqSize; i++) {
+            Map.Entry<Pair<Integer, Integer>, Double> tmp = pq.poll();
+            Pair<Integer, Integer> doc = tmp.getKey();
+            result.add(0, new Pair<>(getDoc(doc), tmp.getValue()));
+        }
+//        System.out.println(result);
+        return result.iterator();
+    }
+
+
+    /**
+     * Find a word in the dictionary, if can not find, return an empty PositionalWordInfo
+     */
+    private PositionalWordInfo findPositionalWord (PageFileChannel wordsFileChannel, String w) {
+        ByteBuffer wordsBuffer = wordsFileChannel.readAllPages();
+        readFirstPageOfWord(wordsBuffer);
+
+        PositionalWordInfo wi = new PositionalWordInfo();
+        while (wordsBuffer.hasRemaining()) {
+            wi.readOneWord(wordsBuffer);
+            if (w.equals(wi.word)) {
+                return wi;
+            }
+        }
+        return new PositionalWordInfo();
+    }
+
     /**
      * Returns the number of documents containing the token within the given segment.
      * The token should be already analyzed by the analyzer. The analyzer shouldn't be applied again.
@@ -1200,64 +1370,23 @@ public class PositionalIndexManager extends InvertedIndexManager {
 
     @Override
     public int getDocumentFrequency(int segmentNum, String token) {
-        int lenList = -1;
-        int offsetList = -1;
-
+        int lenList = 0;
         // read segmentXXa
         Path wordsPath = Paths.get(indexFolder + "/segment" + segmentNum + "a");
         PageFileChannel wordsFileChannel = PageFileChannel.createOrOpen(wordsPath);
-
         ByteBuffer wordsBuffer = wordsFileChannel.readAllPages();
         wordsFileChannel.close();
         readFirstPageOfWord(wordsBuffer);
 
-        // based on remaining page, search the dictionary for the token and get the offset(list), lenOfByte(list)
+        // based on remaining page, search the dictionary for the token and get the len(list)
         PositionalWordInfo wi = new PositionalWordInfo();
         while (wordsBuffer.hasRemaining()) {
             wi.readOneWord(wordsBuffer);
             if (token.equals(wi.word)) {
-                offsetList = wi.offsetB;
                 lenList = wi.lenB;
                 break;
             }
         }
-        if (lenList == -1 || offsetList == -1) {return 0;}
-
-        // read segmentXXb base on offset(list), lenOfByte(list)
-        Path listPath = Paths.get(indexFolder + "/segment" + segmentNum + "b");
-        PageFileChannel listFileChannel = PageFileChannel.createOrOpen(listPath);
-        int pageIDRead = offsetList/PageFileChannel.PAGE_SIZE;
-        ByteBuffer bb = listFileChannel.readPage(pageIDRead);
-        listFileChannel.close();
-        bb.position(offsetList % PageFileChannel.PAGE_SIZE);
-
-        // get invertedLists for the token
-        int remain = bb.limit() - bb.position();
-        int lSize = lenList;
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-
-        // if the array is longer than the remaining buffer, first read the buffer,
-        // then open the next page and read
-
-        while (lSize / remain >= 1) {
-            byte[] result = new byte[remain];
-            bb.get(result, 0, remain);
-            output.write(result, 0, result.length);
-
-            pageIDRead += 1;
-            bb = readSegPage(segmentNum, "b", pageIDRead);
-            lSize -= remain;
-            remain = PageFileChannel.PAGE_SIZE;
-        }
-
-        // if the array is no longer than the remaining buffer, just read the buffer
-        byte[] result = new byte[lSize];
-        bb.get(result, 0, lSize);
-        output.write(result, 0, result.length);
-        byte[] out = output.toByteArray();
-
-        // get the length of the inverted list
-        List<Integer> list = compressor.decode(out, 0, out.length);
-        return list.size();
+        return lenList;
     }
 }

@@ -23,9 +23,19 @@ import java.io.File;
 
 import static com.google.common.collect.Maps.immutableEntry;
 
-
 /**
  * This class manages an disk-based inverted index and all the documents in the inverted index.
+ *
+ * On disk, there are 3 files per segment: docStore, dictionary, and invertedLists.
+ *
+ * Dictionary is in “segmentXXa”. The first page has one integer, which represents the total number of bytes the remaining
+ * pages will use. The remaining pages store word information for each keyword — length(keywords), keywords, pageID(posting list),
+ * offset(posting list) (the offset of this page), length(posting list).
+ *
+ * InvertedLists is in “segmentXXb”. For each keyword, it stores — docID1, length(position list of docID1), docID2,
+ * length(position list of docID2) ……
+ *
+ * DocStore is in “segmentXX.db”.
  *
  * Please refer to the project 2 wiki page for implementation guidelines.
  */
@@ -162,7 +172,7 @@ public class InvertedIndexManager {
         }
         docID = 0;
 
-        // store the len(keywords), keywords, page(list), offset(list) (the offset of this page), len(list) (not include len(position))
+        // store the len(keywords), keywords, page(list), offset(list) (the offset of this page), len(list)
         // in segmentXXa, with the first page have the total number of bytes the remaining pages will use
 
         ByteBuffer wordsBuffer = ByteBuffer.allocate(STORE_PARAMETER * invertedLists.size());
@@ -386,7 +396,7 @@ public class InvertedIndexManager {
             pageIDRead += 1;
             bb = readSegPage(segID, "b", pageIDRead);
             lSize -= remainInt;
-            remainInt = PageFileChannel.PAGE_SIZE / 4;
+            remainInt = PageFileChannel.PAGE_SIZE / (4 * 2);
         }
 
         // if the posting list is no longer than the remaining buffer, just read the buffer
@@ -430,7 +440,7 @@ public class InvertedIndexManager {
             pfc.appendPage(bb);
             bb.clear();
             lSize -= remainInt;
-            remainInt = PageFileChannel.PAGE_SIZE / 4;
+            remainInt = PageFileChannel.PAGE_SIZE / (4 * 2);
         }
 
         // if the posting list is no longer than the remaining buffer, just write the buffer
@@ -1233,38 +1243,27 @@ public class InvertedIndexManager {
         List<String> words = analyzer.analyze(q);
         Map<String, Double> IDF = new HashMap<>();
         Map<String, Integer> queryTF = new HashMap<>();
-
-        // In the first pass, access each segment to calculate the IDF's of the query keywords
-        for (String w : words) {
-            if (!IDF.containsKey(w)) {
-                IDF.put(w, computeIDF(w));
-            }
-
-            if(queryTF.containsKey(w))
-                queryTF.put(w, queryTF.get(w) + 1);
-            else
-                queryTF.put(w, 1);
-        }
-
         Set<String> wordSet = new HashSet<>();
         wordSet.addAll(words);
-//        System.out.println("IDF:"+IDF);
-//        System.out.println("queryTF:"+queryTF);
 
-//        PriorityQueue<Pair<Integer, Integer>> pq = new PriorityQueue<>(score.size(), new Comparator<Pair<Integer, Integer>>() {
-//            @Override
-//            public int compare(Pair<Integer, Integer> p1, Pair<Integer, Integer> p2) {
-//                return score.get(p1).compareTo(score.get(p2));
-//            }
-//        });
-//        PriorityQueue<Map.Entry<Pair<Integer, Integer>, Double>> pq = new PriorityQueue<Map.Entry<Pair<Integer, Integer>,Double>>(
-//                topK, new Comparator<Map.Entry<Pair<Integer, Integer>, Double>>() {
-//            @Override
-//            public int compare(Map.Entry<Pair<Integer, Integer>, Double> d0,
-//                               Map.Entry<Pair<Integer, Integer>, Double> d1) {
-//                return d0.getValue().compareTo(d1.getValue());
-//            }
-//        });
+        // If there are only one word in query, set IDF to 1, queryTF to 1
+        if (wordSet.size() == 1) {
+            IDF.put(words.get(0), 1.0);
+            queryTF.put(words.get(0), 1);
+        } else {
+            // In the first pass, access each segment to calculate the IDF of the query keywords
+            for (String w : words) {
+                if (!IDF.containsKey(w)) {
+                    IDF.put(w, computeIDF(w));
+                }
+
+                if(queryTF.containsKey(w))
+                    queryTF.put(w, queryTF.get(w) + 1);
+                else
+                    queryTF.put(w, 1);
+            }
+        }
+
         PriorityQueue<Map.Entry<Pair<Integer, Integer>, Double>> pq = new PriorityQueue<>(
                 (a,b) -> a.getValue().compareTo(b.getValue())
         );
@@ -1300,7 +1299,6 @@ public class InvertedIndexManager {
                 for (int docID: docMap.keySet()) {
                     double tfIdf = docMap.get(docID) * IDF.get(w);
                     double queryTfIdf = queryTF.get(w) * IDF.get(w);
-                    System.out.println("doc:"+i+","+docID+";word:"+w+";tfIdf"+tfIdf+";queryTfIdf"+queryTfIdf);
                     Pair<Integer, Integer> doc = new Pair<>(i, docID);
 
                     if (dotProductAccumulator.containsKey(doc)) {
@@ -1320,19 +1318,12 @@ public class InvertedIndexManager {
                 if (vectorLengthAccumulator.get(d) != 0.0) {
                     score.put(d, (double) dotProductAccumulator.get(d) / Math.sqrt(vectorLengthAccumulator.get(d)));
                 }
-//                pq.add(d);
-//                if (topK != null) {
-//                    if (pq.size() > topK)
-//                        pq.poll();
-//                }
             }
             pq.addAll(score.entrySet());
             if (topK != null) {
                 while (pq.size() > topK)
                     pq.poll();
             }
-//            System.out.println(score);
-//            System.out.println(pq);
         }
 
         // based on <SegmentID, LocalDocID> retrieve document
@@ -1343,7 +1334,6 @@ public class InvertedIndexManager {
             Pair<Integer, Integer> doc = tmp.getKey();
             result.add(0, new Pair<>(getDoc(doc), tmp.getValue()));
         }
-        System.out.println(result);
         return result.iterator();
     }
 
@@ -1367,7 +1357,7 @@ public class InvertedIndexManager {
     /**
      * Retrieve document based on <SegmentID, LocalDocID>
      */
-    private Document getDoc (Pair<Integer, Integer> doc) {
+    Document getDoc (Pair<Integer, Integer> doc) {
         int segmentID = doc.getLeft();
         int localDocID = doc.getRight();
         DocumentStore ds = MapdbDocStore.createOrOpen(indexFolder + "/segment" + segmentID + ".db");
@@ -1379,7 +1369,7 @@ public class InvertedIndexManager {
     /**
      * Returns the IDF of the token
      */
-    private double computeIDF(String token) {
+    double computeIDF(String token) {
         int segNum = getNumSegments();
         int N = 0;
         int freq = 0;
@@ -1424,38 +1414,5 @@ public class InvertedIndexManager {
             }
         }
         return lenList;
-    }
-
-    public static void main(String[] args) {
-        Map<String, Double> score = new HashMap<>();
-        score.put("a",0.83);
-        score.put("b",0.28);
-        score.put("c",0.81);
-
-        Map<String, Double> score2 = new HashMap<>();
-        score2.put("d",0.86);
-        PriorityQueue<Map.Entry<String, Double>> pq = new PriorityQueue<>(
-                (a,b) -> b.getValue().compareTo(a.getValue())
-        );
-//        PriorityQueue<String> pq = new PriorityQueue<String>(3, new Comparator<String>() {
-//
-//            @Override
-//            public int compare(String arg0, String arg1) {
-//                return score.get(arg0).compareTo(score.get(arg1));
-//            }
-//        });
-        pq.addAll(score.entrySet());
-        pq.addAll(score2.entrySet());
-
-        System.out.println(pq);
-//        System.out.println();
-//        PriorityQueue<Pair<Integer, Integer>> pq = new PriorityQueue<>(new Comparator<Pair<Integer, Integer>>() {
-//            @Override
-//            public int compare(Pair<Integer, Integer> p1, Pair<Integer, Integer> p2) {
-//                if (score.get(p1) < score.get(p2)) return -1;
-//                if (score.get(p1) > score.get(p2)) return 1;
-//                return 0;
-//            }
-//        });
     }
 }
