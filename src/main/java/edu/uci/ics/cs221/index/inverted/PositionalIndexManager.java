@@ -35,7 +35,7 @@ import java.io.ByteArrayOutputStream;
  * PositionLists is in “segmentXXc”. For each keyword, it stores — position list of docID1, position list of docID2 ……
  *
  * DocStore is in “segmentXX.db”.
- * 
+ *
  * Please refer to the project 3 wiki page for implementation guidelines.
  */
 
