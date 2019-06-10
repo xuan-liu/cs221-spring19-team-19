@@ -28,8 +28,8 @@ public class WordInfo {
      */
 
     public void writeOneWord(ByteBuffer bb) {
-        bb.putInt(word.length());
         byte[] tmp = word.getBytes(StandardCharsets.UTF_8);
+        bb.putInt(tmp.length);
         bb.put(tmp);
         bb.putInt(pageID);
         bb.putInt(offset);
