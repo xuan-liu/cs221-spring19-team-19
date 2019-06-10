@@ -502,14 +502,12 @@ public class InvertedIndexManager {
 
                 //get the list according to the word, for list 2, all docID add numDoc1
                 BufferAndList bl1 = getIndexListGivenLen(segID1, lb1, pageIDRead1, wi1.len, false, numDoc1);
-//                System.out.println("word: "+wi1.word+", len: "+wi1.len);
                 lb1 = bl1.bb;
                 List<Integer> ls1 = bl1.list;
                 Map<Integer, Integer> map1 = bl1.map;
                 pageIDRead1 = bl1.pageIDRead;
 
                 BufferAndList bl2 = getIndexListGivenLen(segID2, lb2, pageIDRead2, wi2.len, true, numDoc1);
-//                System.out.println("word: "+wi2.word+", len: "+wi2.len);
                 lb2 = bl2.bb;
                 List<Integer> ls2 = bl2.list;
                 Map<Integer, Integer> map2 = bl2.map;
@@ -541,7 +539,6 @@ public class InvertedIndexManager {
             else if (wi1.word.compareTo(wi2.word) > 0) {
                 // add key2 and its list to the disk, move bb2 to the next word
                 BufferAndList bl2 = getIndexListGivenLen(segID2, lb2, pageIDRead2, wi2.len, true, numDoc1);
-//                System.out.println("word: "+wi2.word+", len: "+wi2.len);
                 lb2 = bl2.bb;
                 List<Integer> ls2 = bl2.list;
                 Map<Integer, Integer> map2 = bl2.map;
@@ -580,7 +577,6 @@ public class InvertedIndexManager {
             else {
                 // add key1 and its list to the disk, move bb1 to the next word
                 BufferAndList bl1 = getIndexListGivenLen(segID1, lb1, pageIDRead1, wi1.len, false, numDoc1);
-//                System.out.println("word: "+wi1.word+", len: "+wi1.len);
                 lb1 = bl1.bb;
                 List<Integer> ls1 = bl1.list;
                 Map<Integer, Integer> map1 = bl1.map;
@@ -1260,11 +1256,11 @@ public class InvertedIndexManager {
                 if (!IDF.containsKey(w)) {
                     IDF.put(w, computeIDF(w));
                 }
-
-                if(queryTF.containsKey(w))
+                if (queryTF.containsKey(w)) {
                     queryTF.put(w, queryTF.get(w) + 1);
-                else
+                } else {
                     queryTF.put(w, 1);
+                }
             }
         }
 
@@ -1321,6 +1317,8 @@ public class InvertedIndexManager {
             for (Pair<Integer, Integer> d: dotProductAccumulator.keySet()) {
                 if (vectorLengthAccumulator.get(d) != 0.0) {
                     score.put(d, (double) dotProductAccumulator.get(d) / Math.sqrt(vectorLengthAccumulator.get(d)));
+                } else {
+                    score.put(d, 0.0);
                 }
             }
             pq.addAll(score.entrySet());
