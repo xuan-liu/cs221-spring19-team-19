@@ -1,20 +1,11 @@
 
 package edu.uci.ics.cs221.search;
 
-import edu.uci.ics.cs221.analysis.Analyzer;
-import edu.uci.ics.cs221.analysis.ComposableAnalyzer;
-import edu.uci.ics.cs221.analysis.PorterStemmer;
-import edu.uci.ics.cs221.analysis.PunctuationTokenizer;
 import edu.uci.ics.cs221.index.inverted.InvertedIndexManager;
-import edu.uci.ics.cs221.index.inverted.PageFileChannel;
 import edu.uci.ics.cs221.index.inverted.Pair;
-import edu.uci.ics.cs221.index.inverted.Pair.*;
 import edu.uci.ics.cs221.storage.Document;
-import edu.uci.ics.cs221.storage.DocumentStore;
-import edu.uci.ics.cs221.storage.MapdbDocStore;
 
 import java.io.*;
-import java.nio.BufferOverflowException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -27,13 +18,9 @@ public class IcsSearchEngine {
     private InvertedIndexManager manager;
 
     private Path docPath;
-    // private ByteBuffer buffer;
 
-    // private Map<Integer, Document> docMap;
-    // private Map<Integer, Double> ranking;
-    // private Map<Integer, String> urlMap;
-
-    // private List<Pair<Integer, Double>> pageRanks;
+    private Map<Document, Integer> docMap;
+    private Map<Integer, Double> ranking;
 
     /**
      * Initializes an IcsSearchEngine from the directory containing the documents and the InvertedIndexManager
@@ -49,11 +36,8 @@ public class IcsSearchEngine {
             manager = indexManager;
             manager.STORE_PARAMETER = 220;
             docPath = documentDirectory;
-            //docMap = new TreeMap<>();
-            // urlMap = new TreeMap<>();
-            //ranking = new TreeMap<>();
-            //buffer = ByteBuffer.allocate(InvertedIndexManager.STORE_PARAMETER * 250);
-            //buffer.rewind();
+            docMap = new HashMap<>();
+            ranking = new TreeMap<>();
         }
         else {
             throw new RuntimeException(documentDirectory + " is not a directory!");
@@ -77,34 +61,21 @@ public class IcsSearchEngine {
     public void writeIndex() {
         String folder = docPath.toString() + "/cleaned";
         long size = getNumFiles(folder);
-        int seg = 0;
         if (size <= 0) {
             throw new RuntimeException("Empty Directory!");
         }
-        // docSize = docFiles.length;
+        // reading all the files in the directory
         for (int index = 0; index < size; index++) {
             Path tempPath = Paths.get(folder + "/" + index);
             try {
-                List<String> lines = Files.readAllLines(tempPath);
-                int id = Integer.parseInt(lines.get(0).trim());
-                String url = lines.get(1).trim();
-                String text;
-                if (lines.size() < 3) {
-                    text = "_";
-                }
-                else {
-                    text = lines.get(2).trim();
-                }
-                // urlMap.put(id, url);
-                Document doc = new Document(text);
-                // urlMap.put(id, url);
+                String content = new String(Files.readAllBytes(tempPath), "UTF-8");
+
+                // loading the whole text in the document
+                Document doc = new Document(content);
                 manager.addDocument(doc);
 
-                // docMap.put(id, doc);
-                //if (urlMap.size() >= InvertedIndexManager.DEFAULT_FLUSH_THRESHOLD) {
-                //    appendDocs(seg);
-                //    seg++;
-                //}
+                // note that index is the doc ID
+                docMap.put(doc, index);
             }
             catch (FileNotFoundException notFound) {
                 System.out.println("file #" + index + " skipped!");
@@ -113,26 +84,6 @@ public class IcsSearchEngine {
                 throw new RuntimeException("IO Error Encountered! " + "(" + e.toString() + ")");
             }
         }
-        //writeBufferOnDisk();
-    }
-
-    /*private void appendDocs(int index) {
-        System.out.println("appending documents!");
-        String path = docPath.toString() + "/Documents/segment " + index + ".db";
-        DocumentStore ds = MapdbDocStore.createWithBulkLoad(path, docMap.entrySet().iterator());
-        System.out.println(ds.size());
-        ds.close();
-        docMap = new HashMap<>();
-    }*/
-
-    /**
-     * loading the url and id info into the byte buffer
-     */
-
-    private void loadBuffer(int id, String url) {
-        //buffer.putInt(id);
-        //buffer.putInt(url.length());
-        //buffer.put(url.getBytes());
     }
 
     /**
@@ -150,16 +101,20 @@ public class IcsSearchEngine {
      * compute the graph representation of the pages, incoming and outgoing edges
      */
 
-    private void makeGraph() {
+    private void populateGraph(Map<Integer, List<Integer>> incoming, Map<Integer, List<Integer>> outgoing) {
         String folder = docPath.toString() + "/id-graph.tsv";
-        Map<Integer, List<Integer>> incoming = new HashMap<>();
-        Map<Integer, List<Integer>> outgoing = new HashMap<>();
         try {
+
+            // loading the graph information
             List<String> lines = Files.readAllLines(Paths.get(folder));
             for (String edge : lines) {
                 String[] info = edge.trim().split("\t");
+
+                // reading from and to nodes
                 int from = Integer.parseInt(info[0]);
                 int to = Integer.parseInt(info[1]);
+
+                // adding to incoming edges map
                 if (incoming.containsKey(to)) {
                     List<Integer> edges = incoming.get(to);
                     edges.add(from);
@@ -170,6 +125,8 @@ public class IcsSearchEngine {
                     edges.add(from);
                     incoming.put(to, edges);
                 }
+
+                // adding to outgoing edges map
                 if (outgoing.containsKey(from)) {
                     List<Integer> edges = outgoing.get(from);
                     edges.add(to);
@@ -181,27 +138,9 @@ public class IcsSearchEngine {
                     outgoing.put(from, edges);
                 }
             }
-
-            graphOnDisk(incoming, outgoing);
         }
         catch (IOException e) {
             throw new RuntimeException("IO Error Encountered! " + "(" + e.toString() + ")");
-        }
-    }
-
-    private void graphOnDisk(Map<Integer, List<Integer>> incoming, Map<Integer, List<Integer>> outgoing) {
-        String path = docPath.toString() + "/output/graph";
-        ByteBuffer bb = ByteBuffer.allocate(incoming.size() * 8 + 600 * 4);
-        bb.rewind();
-        for (int id : incoming.keySet()) {
-            int cap = 8 + incoming.get(id).size() * 4;
-            //ByteBuffer bb = ByteBuffer.allocate(cap);
-            //bb.rewind();
-            bb.putInt(id);
-            bb.putInt(incoming.get(id).size());
-            for (int tempID : incoming.get(id)) {
-                bb.putInt(tempID);
-            }
         }
     }
 
@@ -211,12 +150,19 @@ public class IcsSearchEngine {
      */
 
     public void computePageRank(int numIterations) {
-        makeGraph();
+        Map<Integer, List<Integer>> incoming = new TreeMap<>();
+        Map<Integer, List<Integer>> outgoing = new TreeMap<>();
+
+        // making the graph structure
+        populateGraph(incoming, outgoing);
         double damping = 0.85;
+
+        // starting the iteration
         for (int itr = 0; itr < numIterations; itr++) {
-            //pageRanks = new ArrayList<>();
-            /*for (int id : incoming.keySet()) {
+            for (int id : incoming.keySet()) {
                 double pr = 1 - damping;
+
+                // calculating the page rank
                 for (int tempID : incoming.get(id)) {
                     double tempRank;
                     if (ranking.containsKey(tempID)) {
@@ -228,15 +174,15 @@ public class IcsSearchEngine {
                     int c = outgoing.get(tempID).size();
                     pr += damping * (tempRank / c);
                 }
+
+                // adding the page rank to the map
                 if (ranking.containsKey(id)) {
                     ranking.replace(id, pr);
                 }
                 else {
                     ranking.put(id, pr);
                 }
-                Pair temp = new Pair(id, pr);
-                pageRanks.add(temp);
-            }*/
+            }
         }
     }
 
@@ -246,18 +192,30 @@ public class IcsSearchEngine {
      */
 
     public List<Pair<Integer, Double>> getPageRankScores() {
-        //return pageRanks;
-        return null;
+        List<Pair<Integer, Double>> pageRank = new ArrayList<>();
+        for (int id : ranking.keySet()) {
+            Pair<Integer, Double> target = new Pair(id, ranking.get(id));
+            insertScores(target, pageRank);
+        }
+        return pageRank;
     }
 
     /**
-     * get the document size
-     * @return the size of all docs added
+     * insert in order in a list
+     * @param target
+     * @param arr
      */
 
-    //private long getDocSize() {
-    //    return docSize;
-    //}
+    private void insertScores(Pair<Integer, Double> target, List<Pair<Integer, Double>> arr) {
+        int n = arr.size();
+        for (int i = 0; i < n; i++) {
+            if (target.getRight() >= arr.get(i).getRight()) {
+                arr.add(i, target);
+                return;
+            }
+        }
+        arr.add(target);
+    }
 
     /**
      * Searches the ICS document corpus and returns the top K documents ranked by combining TF-IDF and PageRank.
@@ -277,59 +235,62 @@ public class IcsSearchEngine {
 
     public Iterator<Pair<Document, Double>> searchQuery(List<String> query, int topK, double pageRankWeight) {
         Iterator<Pair<Document, Double>> rawSearch = manager.searchTfIdf(query, null);
-        Map<Double, Document> result = new HashMap<>();
-        /*while (rawSearch.hasNext()) {
+        Map<Document, Double> result = new HashMap<>();
+
+        // getting each score
+        while (rawSearch.hasNext()) {
             Pair curr = rawSearch.next();
             Document temp = (Document) curr.getLeft();
             double tf = (double) curr.getRight();
             int id = docMap.get(temp);
-            double pr = ranking.get(id);
+            double pr;
+
+            // get the value of pr
+            if (ranking.containsKey(id)) {
+                pr = ranking.get(id);
+            }
+            else {
+                pr = 0;
+            }
             double score = tf + pr * pageRankWeight;
-            result.put(score, temp);
+            result.put(temp, score);
         }
-        List<Double> keys = new ArrayList<>(result.keySet());
-        Collections.sort(keys);
-        while (keys.size() > topK) {
-            keys.remove(0);
-        }
-        Collections.reverse(keys);*/
+
+        // adding the score and documents to a list
         List<Pair<Document, Double>> res = new ArrayList<>();
-        /*for (double score : keys) {
-            Document doc = result.get(score);
-            Pair ans = new Pair(doc, score);
-            res.add(ans);
-        }*/
+        for (Document doc : result.keySet()) {
+            Pair<Document, Double> target = new Pair(doc, result.get(doc));
+            insertDocs(target, res);
+        }
+
+        // cutting the result
+        while (res.size() > topK) {
+            res.remove(res.size() - 1);
+        }
         return res.iterator();
     }
 
-    public static void main(String[] args) throws FileNotFoundException, IOException {
+    /**
+     * insert documents and scores in order
+     * @param target
+     * @param arr
+     */
 
-        /*String indexFolder = "./";
-        Path path = Paths.get(indexFolder);
-        String testing = "./index/IcsSearchEngineTest";
-        deleteDirectory(testing);
-        Path indexPath = Paths.get(testing);
-        Analyzer analyzer = new ComposableAnalyzer(new PunctuationTokenizer(), new PorterStemmer());
-
-        InvertedIndexManager invertedIndexManager;
-        IcsSearchEngine icsSearchEngine;
-
-        InvertedIndexManager.DEFAULT_FLUSH_THRESHOLD = 8;
-
-        invertedIndexManager = InvertedIndexManager.createOrOpen(indexPath.toString(), analyzer);
-        System.out.println();
-        icsSearchEngine = IcsSearchEngine.createSearchEngine(path, invertedIndexManager);
-
-        icsSearchEngine.writeIndex();
-
-        icsSearchEngine.computePageRank(1);
-
-        System.out.println(icsSearchEngine.ranking.get(0));
-
-        System.out.println(invertedIndexManager.getNumSegments());
-
-        deleteDirectory(testing);*/
+    private void insertDocs(Pair<Document, Double> target, List<Pair<Document, Double>> arr) {
+        int n = arr.size();
+        for (int i = 0; i < n; i++) {
+            if (target.getRight() >= arr.get(i).getRight()) {
+                arr.add(i, target);
+                return;
+            }
+        }
+        arr.add(target);
     }
+
+    /**
+     * delete files and directories if needed
+     * @param path
+     */
 
     private static void deleteDirectory(String path) {
         File file = new File(path);
