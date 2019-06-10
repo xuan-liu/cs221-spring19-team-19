@@ -352,7 +352,6 @@ public class PositionalIndexManager extends InvertedIndexManager {
 
     @Override
     void mergeInvertedLists(int segID1, int segID2, int numDoc1) {
-//        System.out.println("merge:"+segID1+" and "+segID2);
         // read two segmentXXa into two buffer and delete these two segmentXXa
         Path path = Paths.get(indexFolder + "/segment" + segID1 + "a");
         PageFileChannel pfc = PageFileChannel.createOrOpen(path);
@@ -405,7 +404,6 @@ public class PositionalIndexManager extends InvertedIndexManager {
         PageFileChannel positionFileChannel = PageFileChannel.createOrOpen(path);
 
         while (true) {
-//            System.out.println("word1: "+wi1.word+" ,word2: "+wi2.word);
             if (wi1.word.equals(wi2.word)) {
                 // add them to the dictionary, find their posting lists and add them to the disk
                 //find their position list and add them to the disk, move both bb1 and bb2 to the next words
@@ -1260,11 +1258,11 @@ public class PositionalIndexManager extends InvertedIndexManager {
                 if (!IDF.containsKey(w)) {
                     IDF.put(w, computeIDF(w));
                 }
-
-                if(queryTF.containsKey(w))
+                if (queryTF.containsKey(w)) {
                     queryTF.put(w, queryTF.get(w) + 1);
-                else
+                } else {
                     queryTF.put(w, 1);
+                }
             }
         }
 
@@ -1304,7 +1302,6 @@ public class PositionalIndexManager extends InvertedIndexManager {
                 for (int docID: docMap.keySet()) {
                     double tfIdf = docMap.get(docID) * IDF.get(w);
                     double queryTfIdf = queryTF.get(w) * IDF.get(w);
-//                    System.out.println("doc:"+i+","+docID+";word:"+w+";tfIdf"+tfIdf+";queryTfIdf"+queryTfIdf);
                     Pair<Integer, Integer> doc = new Pair<>(i, docID);
 
                     if (dotProductAccumulator.containsKey(doc)) {
@@ -1323,13 +1320,11 @@ public class PositionalIndexManager extends InvertedIndexManager {
             // for each docID in this segment, compute the score and add it to priority queue
             for (Pair<Integer, Integer> d: dotProductAccumulator.keySet()) {
                 if (vectorLengthAccumulator.get(d) != 0.0) {
-//                    System.out.println(d+": " + dotProductAccumulator.get(d)+" , "+Math.sqrt(vectorLengthAccumulator.get(d)));
                     score.put(d, (double) dotProductAccumulator.get(d) / Math.sqrt(vectorLengthAccumulator.get(d)));
                 } else {
                     score.put(d, 0.0);
                 }
             }
-//            System.out.println(score);
             pq.addAll(score.entrySet());
             if (topK != null) {
                 while (pq.size() > topK)
@@ -1345,7 +1340,6 @@ public class PositionalIndexManager extends InvertedIndexManager {
             Pair<Integer, Integer> doc = tmp.getKey();
             result.add(0, new Pair<>(getDoc(doc), tmp.getValue()));
         }
-//        System.out.println(result);
         return result.iterator();
     }
 
